@@ -5,7 +5,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
-  public function up(): void {
+  public function up(): void
+  {
     Schema::create('tenant_user', function (Blueprint $table) {
       $table->id();
 
@@ -19,7 +20,9 @@ return new class extends Migration {
       $table->timestamp('last_seen_at')->nullable();
       $table->foreignId('invited_by_user_id')->nullable()->constrained('users')->nullOnDelete();
 
-      $table->timestamps();
+      $table->timestamp('created_at')->useCurrent();
+      $table->timestamp('updated_at')->useCurrentOnUpdate();
+      $table->softDeletes();
 
       $table->unique(['tenant_id', 'user_id']);
       $table->index(['user_id', 'status']);
@@ -27,7 +30,8 @@ return new class extends Migration {
     });
   }
 
-  public function down(): void {
+  public function down(): void
+  {
     Schema::dropIfExists('tenant_user');
   }
 };

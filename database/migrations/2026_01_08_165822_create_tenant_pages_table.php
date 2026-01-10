@@ -4,33 +4,37 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
-  public function up(): void {
-    Schema::create('tenant_pages', function (Blueprint $table) {
-      $table->id();
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('tenant_pages', function (Blueprint $table) {
+            $table->id();
 
-      $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
+            $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
 
-      $table->string('slug', 120);         // "home", "about", "contact"
-      $table->string('title', 200);
-      $table->json('schema')->nullable();  // your JSON-driven page builder schema
-      $table->json('seo')->nullable();     // meta title/desc, og tags, etc.
+            $table->string('slug', 120);         // "home", "about", "contact"
+            $table->string('title', 200);
+            $table->json('schema')->nullable();  // your JSON-driven page builder schema
+            $table->json('seo')->nullable();     // meta title/desc, og tags, etc.
 
-      $table->string('status', 20)->default('published'); // draft|published
-      $table->string('meta_title', 255)->nullable();
-      $table->string('meta_description', 500)->nullable();
-      $table->foreignId('og_asset_id')->nullable()->constrained('tenant_assets')->nullOnDelete();
+            $table->string('status', 20)->default('published'); // draft|published
+            $table->string('meta_title', 255)->nullable();
+            $table->string('meta_description', 500)->nullable();
+            $table->foreignId('og_asset_id')->nullable()->constrained('tenant_assets')->nullOnDelete();
 
-      $table->timestamp('published_at')->nullable();
-      $table->timestamps();
-      $table->softDeletes();
+            $table->timestamp('published_at')->nullable();
+            $table->timestamp('created_at')->useCurrent();
+            $table->timestamp('updated_at')->useCurrentOnUpdate();
+            $table->softDeletes();
 
-      $table->unique(['tenant_id', 'slug']);
-      $table->index(['tenant_id', 'status', 'published_at']);
-    });
-  }
+            $table->unique(['tenant_id', 'slug']);
+            $table->index(['tenant_id', 'status', 'published_at']);
+        });
+    }
 
-  public function down(): void {
-    Schema::dropIfExists('tenant_pages');
-  }
+    public function down(): void
+    {
+        Schema::dropIfExists('tenant_pages');
+    }
 };

@@ -5,7 +5,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
-  public function up(): void {
+  public function up(): void
+  {
     Schema::create('tenant_features', function (Blueprint $table) {
       $table->id();
 
@@ -14,14 +15,17 @@ return new class extends Migration {
       $table->boolean('enabled')->default(true);
       $table->json('config')->nullable();       // per-feature config
 
-      $table->timestamps();
+      $table->timestamp('created_at')->useCurrent();
+      $table->timestamp('updated_at')->useCurrentOnUpdate();
+      $table->softDeletes();
 
       $table->unique(['tenant_id', 'feature_key']);
       $table->index(['tenant_id', 'enabled']);
     });
   }
 
-  public function down(): void {
+  public function down(): void
+  {
     Schema::dropIfExists('tenant_features');
   }
 };
