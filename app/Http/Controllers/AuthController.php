@@ -2,11 +2,16 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Resources\UserResource;
+use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
+use Carbon\Carbon;
 
 class AuthController extends Controller
 {
@@ -22,11 +27,33 @@ class AuthController extends Controller
             'password' => ['required', 'confirmed', Password::defaults()],
         ]);
 
-        $user = User::create([
-            'name'     => $validated['name'],
-            'email'    => $validated['email'],
-            'password' => Hash::make($validated['password']),
-        ]);
+        $user = DB::transaction(function () use ($validated) {
+            $user = User::create([
+                'name'     => $validated['name'],
+                'email'    => $validated['email'],
+                'password' => Hash::make($validated['password']),
+            ]);
+
+            // Create initial tenant with random 8-char key/name
+            $tenant = Tenant::create([
+                'name' => $this->uniqueTenantCode(8),
+                'key' => $this->uniqueTenantCode(8),
+                'created_by_user_id' => $user->id,
+            ]);
+
+            $tenant->trial_ends_at = now()->addMonthsNoOverflow(6);
+            $tenant->save();
+
+            // Attach user to tenant
+            $tenant->users()->attach($user->id, [
+                'role' => 'owner',
+                'status' => 'active',
+                'joined_at' => now(),
+                'invited_by_user_id' => $user->id,
+            ]);
+
+            return $user;
+        });
 
         // Log in using the session (cookie)
         Auth::guard('web')->login($user);
@@ -34,7 +61,7 @@ class AuthController extends Controller
 
         return response()->json([
             'ok'   => true,
-            'user' => $request->user(),
+            'user' => UserResource::make($request->user()->load('tenants')),
         ], 201);
     }
 
@@ -67,7 +94,7 @@ class AuthController extends Controller
 
         return response()->json([
             'ok'   => true,
-            'user' => $request->user(),
+            'user' => UserResource::make($request->user()->load('tenants')),
         ]);
     }
 
@@ -92,7 +119,21 @@ class AuthController extends Controller
     {
         return response()->json([
             'ok'   => true,
-            'user' => $request->user(),
+            'user' => UserResource::make($request->user()->load('tenants')),
         ]);
+    }
+
+    /**
+     * Generate a unique random tenant code
+     */
+    private function uniqueTenantCode(int $length = 8): string 
+    {
+        do {
+            $code = Str::lower(Str::random($length));
+        } while (
+            Tenant::where('key', $code)->orWhere('name', $code)->exists()
+        );
+
+        return $code;
     }
 }

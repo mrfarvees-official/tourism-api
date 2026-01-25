@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Tenant extends Model
@@ -17,8 +18,29 @@ class Tenant extends Model
         'timezone',
         'locale',
         'created_by_user_id',
-        'trail_ends_at',
+        'trial_ends_at',
         'suspended_at',
         'meta',
     ];
+
+    
+    /**
+     * Define many-to-many relationship with tenant_users
+     * 
+     * @return array<Tenant>
+     */
+    public function users(): BelongsToMany
+    {
+        return $this->belongsToMany(Tenant::class, 'tenant_user', 'tenant_id', 'user_id')
+            ->using(TenantUser::class)
+            ->withPivot([
+                'role',
+                'status',
+                'joined_at',
+                'last_seen_at',
+                'invited_by_user_id',
+                'deleted_at',
+            ])
+            ->withTimestamps();
+    }
 }

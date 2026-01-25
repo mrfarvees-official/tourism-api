@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('pbac_user_role', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('tenant_id')->constrained();
+            $table->foreignId('tenant_id')->nullable()->constrained();
             $table->foreignId('user_id')->constrained();
             $table->foreignId('role_id')->constrained('pbac_roles');
             $table->enum('status', ['active', 'disabled'])->default('active');

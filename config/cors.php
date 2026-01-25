@@ -18,18 +18,17 @@ return [
     'paths' => [
         'api/*', 
         'sanctum/csrf-cookie', 
-        'login', 
-        'register', 
-        'admin/login', 
-        'admin/register', 
-        'logout'
+        'auth/*',
     ],
 
     'allowed_methods' => ['*'],
 
     'allowed_origins' => array_filter(array_map('trim', explode(',', env('CORS_ALLOWED_DOMAINS', '')))),
 
-    'allowed_origins_patterns' => [],
+    'allowed_origins_patterns' => [
+        '/^http:\/\/lvh\.me:3000$/',
+        '/^http:\/\/[a-z0-9-]+\.lvh\.me:3000$/',
+    ],
 
     'allowed_headers' => ['*'],
 

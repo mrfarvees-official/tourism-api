@@ -2,14 +2,16 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-class TenantUser extends Model
+class TenantUser extends Pivot
 {
     use SoftDeletes;
 
     protected $table = 'tenant_user';
+
+    // Important for pivot models if you want mass assignment / attach data
     protected $fillable = [
         'tenant_id',
         'user_id',
@@ -20,13 +22,9 @@ class TenantUser extends Model
         'invited_by_user_id',
     ];
 
-    public function tenant()
-    {
-        return $this->belongsTo(Tenant::class, 'tenant_id');
-    }
-
-    public function user()
-    {
-        return $this->belongsTo(User::class, 'user_id');
-    }
+    protected $dates = [
+        'joined_at',
+        'last_seen_at',
+        'deleted_at',
+    ];
 }

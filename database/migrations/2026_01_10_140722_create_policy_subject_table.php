@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('pbac_policy_subject', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('tenant_id')->constrained();
+            $table->foreignId('tenant_id')->nullable()->constrained();
             $table->foreignId('policy_id')->constrained('pbac_policy');
             $table->string('subject_type', 50);
             $table->unsignedBigInteger('subject_id');

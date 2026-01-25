@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Policy extends Model
@@ -29,4 +30,15 @@ class Policy extends Model
     {
         return $this->belongsTo(Permission::class, 'permission_id');
     }
+
+    public function subjects(): HasMany
+    {
+        return $this->hasMany(PolicySubject::class, 'policy_id');
+    }
+
+    public function conditions(): HasMany
+    {
+        return $this->hasMany(PolicyContext::class, 'policy_id');
+    }
+
 }
