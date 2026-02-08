@@ -43,4 +43,9 @@ class Tenant extends Model
             ])
             ->withTimestamps();
     }
+
+    public function theme()
+    {
+        return $this->hasOne(TenantTheme::class, 'tenant_id');
+    }
 }

@@ -5,16 +5,21 @@ namespace App\Http\Controllers;
 use App\Http\Resources\UserResource;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Models\UserSession;
+use App\Support\SessionKiller;
+use App\Support\SessionTracker;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
-use Carbon\Carbon;
+use Jenssegers\Agent\Agent;
 
 class AuthController extends Controller
 {
+    // Define max device count for single user login sessions
+    private int $maxDeviceCount = 4;
     /**
      * Cookie-based signup (session auth).
      * Requires valid XSRF token (419 if missing/invalid).
@@ -25,6 +30,10 @@ class AuthController extends Controller
             'name'     => ['required', 'string', 'max:100'],
             'email'    => ['required', 'email', 'max:190', 'unique:users,email'],
             'password' => ['required', 'confirmed', Password::defaults()],
+            'device_name'  => ['nullable', 'string', 'max:120'],
+            'browser_name' => ['nullable', 'string', 'max:40'],
+            'os_name'      => ['nullable', 'string', 'max:40'],
+            'device_type'  => ['nullable', 'in:desktop,mobile,tablet'],
         ]);
 
         $user = DB::transaction(function () use ($validated) {
@@ -59,9 +68,46 @@ class AuthController extends Controller
         Auth::guard('web')->login($user);
         $request->session()->regenerate();
 
+        $sid = $request->session()->getId();
+
+        // Extract device details from agent
+        $agent = new Agent();
+        $agent->setUserAgent($request->userAgent());
+
+        $browser = $request->input('browser_name') ?: $agent->browser();
+        $os      = $request->input('os_name') ?: $agent->platform();
+
+        $deviceType = $request->input('device_type')
+            ?: ($agent->isTablet() ? 'tablet' : ($agent->isMobile() ? 'mobile' : 'desktop'));
+
+        $deviceName = $request->input('device_name')
+            ?: "{$browser} on {$os}";
+
+        // Track current session every time you call me (your request)
+        UserSession::updateOrCreate(
+            ['user_id' => $user->id, 'session_id' => $sid],
+            [
+                'os' => $os,
+                'browser' => $browser,
+                'device_type' => $deviceType,
+                'device_name' => $deviceName,
+                'user_agent' => $request->userAgent(),
+                'ip_last' => $request->ip(),
+                'last_seen_at' => now(),
+                'expires_at' => now()->addMinutes((int) config('session.lifetime')),
+            ]
+        );
+
+        $user->forceFill([
+            'current_session_id' => $sid,
+            'current_session_set_at' => now(),
+        ])->save();
+
         return response()->json([
             'ok'   => true,
+            'status' => 201,
             'user' => UserResource::make($request->user()->load('tenants')),
+            'message' => 'User account created successfully.'
         ], 201);
     }
 
@@ -75,6 +121,10 @@ class AuthController extends Controller
             'email'    => ['required', 'email'],
             'password' => ['required', 'string'],
             'remember' => ['sometimes', 'boolean'],
+            'device_name'  => ['nullable', 'string', 'max:120'],
+            'browser_name' => ['nullable', 'string', 'max:40'],
+            'os_name'      => ['nullable', 'string', 'max:40'],
+            'device_type'  => ['nullable', 'in:desktop,mobile,tablet'],
         ]);
 
         $remember = (bool)($credentials['remember'] ?? false);
@@ -91,11 +141,77 @@ class AuthController extends Controller
 
         // Prevent session fixation
         $request->session()->regenerate();
+        $sid = $request->session()->getId();
+
+        /** @var User $user */
+        $user = $request->user();
+        SessionTracker::track($request, $user->id, 'login');
+
+        DB::transaction(function () use ($request, $user, $sid) {
+            // Extract device details from agent
+            $agent = new Agent();
+            $agent->setUserAgent($request->userAgent());
+
+            $browser = $request->input('browser_name') ?: $agent->browser();
+            $os      = $request->input('os_name') ?: $agent->platform();
+
+            $deviceType = $request->input('device_type')
+                ?: ($agent->isTablet() ? 'tablet' : ($agent->isMobile() ? 'mobile' : 'desktop'));
+
+            $deviceName = $request->input('device_name')
+                ?: "{$browser} on {$os}";
+
+            // Track current session every time you call me (your request)
+            UserSession::updateOrCreate(
+                ['user_id' => $user->id, 'session_id' => $sid],
+                [
+                    'os' => $os,
+                    'browser' => $browser,
+                    'device_type' => $deviceType,
+                    'device_name' => $deviceName,
+                    'user_agent' => $request->userAgent(),
+                    'ip_last' => $request->ip(),
+                    'last_seen_at' => now(),
+                    'expires_at' => now()->addMinutes((int) config('session.lifetime')),
+                ]
+            );
+
+            // Override current session pointer in user table
+            $user->forceFill([
+                'current_session_id' => $sid,
+                'current_session_set_at' => now()
+            ])->save();
+
+            // Enforce max devices (kick oldest)
+            $active = UserSession::where('user_id', $user->id)
+                ->whereNull('revoked_at')
+                ->where(function ($q) {
+                    $q->whereNull('expires_at')->orWhere('expires_at', '>', now());
+                })
+                ->orderByDesc('last_seen_at')
+                ->orderByDesc('created_at')
+                ->get();
+
+            if ($active->count() > $this->maxDeviceCount) {
+                $overflow = $active->slice($this->maxDeviceCount);
+
+                foreach ($overflow as $old) {
+                    $old->update([
+                        'revoked_at' => now(),
+                        'revoke_reason' => 'max devices reached.'
+                    ]);
+
+                    SessionKiller::kill($old->session_id);
+                }
+            }
+        });
 
         return response()->json([
             'ok'   => true,
+            'status' => 200,
             'user' => UserResource::make($request->user()->load('tenants')),
-        ]);
+            'message' => 'User login successfully.'
+        ], 200);
     }
 
     /**
@@ -104,10 +220,20 @@ class AuthController extends Controller
      */
     public function logout(Request $request)
     {
-        Auth::guard('web')->logout();
+        $sid = $request->session()->getId();
 
+        UserSession::where('user_id', $request->user()->id)
+            ->where('session_id', $sid)
+            ->update([
+                'revoked_at' => now(),
+                'revoke_reason' => 'logout'
+            ]);
+
+        Auth::guard('web')->logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();
+
+        SessionKiller::kill($sid);
 
         return response()->noContent();
     }
@@ -117,6 +243,55 @@ class AuthController extends Controller
      */
     public function me(Request $request)
     {
+        if (!session()->has('login_web_' . $request->user()->id)) {
+            session(['login_web_' . $request->user()->id => $request->user()->id]);
+        }
+
+        $data = $request->validate([
+            'device_name'  => ['nullable', 'string', 'max:120'],
+            'browser_name' => ['nullable', 'string', 'max:40'],
+            'os_name'      => ['nullable', 'string', 'max:40'],
+            'device_type'  => ['nullable', 'in:desktop,mobile,tablet'],
+        ]);
+
+        $user = $request->user();
+        $sid = $request->session()->getId();
+
+        // Extract device details from agent
+        $agent = new Agent();
+        $agent->setUserAgent($request->userAgent());
+
+        $browser = $request->input('browser_name') ?: $agent->browser();
+        $os      = $request->input('os_name') ?: $agent->platform();
+
+        $deviceType = $request->input('device_type')
+            ?: ($agent->isTablet() ? 'tablet' : ($agent->isMobile() ? 'mobile' : 'desktop'));
+
+        $deviceName = $request->input('device_name')
+            ?: "{$browser} on {$os}";
+
+        // Track current session every time you call me (your request)
+        UserSession::updateOrCreate(
+            ['user_id' => $user->id, 'session_id' => $sid],
+            [
+                'os' => $os,
+                'browser' => $browser,
+                'device_type' => $deviceType,
+                'device_name' => $deviceName,
+                'user_agent' => $request->userAgent(),
+                'ip_last' => $request->ip(),
+                'last_seen_at' => now(),
+                'expires_at' => now()->addMinutes((int) config('session.lifetime')),
+            ]
+        );
+
+
+        // override pointer each time me is called
+        $user->forceFill([
+            'current_session_id' => $sid,
+            'current_session_set_at' => now(),
+        ]);
+
         return response()->json([
             'ok'   => true,
             'user' => UserResource::make($request->user()->load('tenants')),
@@ -126,7 +301,7 @@ class AuthController extends Controller
     /**
      * Generate a unique random tenant code
      */
-    private function uniqueTenantCode(int $length = 8): string 
+    private function uniqueTenantCode(int $length = 8): string
     {
         do {
             $code = Str::lower(Str::random($length));

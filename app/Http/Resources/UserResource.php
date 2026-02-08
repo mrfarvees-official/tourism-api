@@ -22,7 +22,6 @@ class UserResource extends JsonResource
                     'id'   => $t->id,
                     'key'  => $t->key,
                     'name' => $t->name,
-                    // pivot fields if you want them:
                     'role' => $t->pivot?->role,
                     'status' => $t->pivot?->status,
                     'joined_at' => $t->pivot?->joined_at,
