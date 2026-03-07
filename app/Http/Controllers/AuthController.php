@@ -55,7 +55,7 @@ class AuthController extends Controller
 
             // Attach user to tenant
             $tenant->users()->attach($user->id, [
-                'role' => 'owner',
+                'role' => 'tenant_owner',
                 'status' => 'active',
                 'joined_at' => now(),
                 'invited_by_user_id' => $user->id,

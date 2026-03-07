@@ -3,6 +3,7 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CompanyBootstrapController;
 use App\Http\Controllers\DeviceSessionController;
+use App\Http\Controllers\OrganizationProfileController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('auth:sanctum', 'tracked')->get('/me',                         [AuthController::class, 'me']);
@@ -14,3 +15,6 @@ Route::middleware('auth:sanctum', 'tracked')->post('/me/sessions/logout-others',
 Route::get  ('/company/bootstrap',       [CompanyBootstrapController::class, 'index']);
 Route::get  ('/company/bootstrap/theme', [CompanyBootstrapController::class, 'getTheme']);
 Route::patch('/company/bootstrap/theme', [CompanyBootstrapController::class, 'updateTheme']);
+
+// Organization profile 
+Route::get('/organization', [OrganizationProfileController::class, 'index']);

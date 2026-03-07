@@ -19,11 +19,11 @@ class TenantComponentRepeaterItem extends Model
 
     public function tenant()
     {
-        return $this->belonsTo(Tenant::class, 'tenant_id');
+        return $this->belongsTo(Tenant::class, 'tenant_id');
     }
 
     public function component()
     {
-        return $this->belonsTo(TenantPageComponent::class, 'component_id');
+        return $this->belongsTo(TenantPageComponent::class, 'component_id');
     }
 }

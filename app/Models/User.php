@@ -78,9 +78,6 @@ class User extends Authenticatable
     {
         return Tenant::query()
             ->where('key', $tenantKey)
-            ->whereHas('users', function ($q) {
-                $q->where('tenant_user.user_id', $this->id); // <-- pivot filter
-            })
             ->first();
     }
 
@@ -135,18 +132,9 @@ class User extends Authenticatable
      * 
      * @return array<integer>
      */
-    public function getActiveRoleIds(?int $tenantId) 
+    public function getActiveRoleIds() 
     {
         return UserRole::query()
-            ->where('user_id', $this->id)
-            ->when(
-                $tenantId, 
-                fn($q) => $q->where(function($qq) use ($tenantId) {
-                    $qq->whereNull('tenant_id')
-                        ->orWhere('tenant_id', $tenantId);
-                }),
-                fn($q) => $q->whereNull('tenant_id')
-            )
             ->pluck('role_id')
             ->unique()
             ->values()
@@ -172,11 +160,7 @@ class User extends Authenticatable
         $tenantId = $tenant?->id;
 
         // 3) Get active roles for this tenant / global(if user not in tenant context)
-        $roleIds = $this->getActiveRoleIds($tenantId);
-        
-        // TODO: Remove after dubug (only for debug purpose)
-        $env['role_ids'] = $roleIds;
-        $env['permission_key'] = $permission->key;
+        $roleIds = $this->getActiveRoleIds();
 
         // 5) Load candidate policies (tenant / global  + by user / role + by permission)
         $policies = app(PbacPolicyLoader::class)->load(

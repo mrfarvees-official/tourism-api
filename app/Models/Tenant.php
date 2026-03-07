@@ -48,4 +48,26 @@ class Tenant extends Model
     {
         return $this->hasOne(TenantTheme::class, 'tenant_id');
     }
+
+    public function assets()
+    {
+        return $this->hasMany(TenantAssets::class, 'tenant_id');
+    }
+
+    public function brand()
+    {
+        return $this->hasOne(TenantBranding::class, 'tenant_id');
+    }
+
+    public function domain()
+    {
+        return $this->hasOne(TenantDomain::class, 'tenant_id');
+    }
+
+    public function owner(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'tenant_user', 'tenant_id', 'user_id')
+            ->wherePivot('role', 'tenant_owner')
+            ->wherePivotNull('deleted_at');
+    }
 }
