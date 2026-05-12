@@ -243,21 +243,17 @@ class AuthController extends Controller
      */
     public function me(Request $request)
     {
-        if (!session()->has('login_web_' . $request->user()->id)) {
-            session(['login_web_' . $request->user()->id => $request->user()->id]);
-        }
+        $user = $request->user();
 
-        $data = $request->validate([
+        $request->validate([
             'device_name'  => ['nullable', 'string', 'max:120'],
             'browser_name' => ['nullable', 'string', 'max:40'],
             'os_name'      => ['nullable', 'string', 'max:40'],
             'device_type'  => ['nullable', 'in:desktop,mobile,tablet'],
         ]);
 
-        $user = $request->user();
-        $sid = $request->session()->getId();
+        $sid = $request->hasSession() ? $request->session()->getId() : null;
 
-        // Extract device details from agent
         $agent = new Agent();
         $agent->setUserAgent($request->userAgent());
 
@@ -270,31 +266,30 @@ class AuthController extends Controller
         $deviceName = $request->input('device_name')
             ?: "{$browser} on {$os}";
 
-        // Track current session every time you call me (your request)
-        UserSession::updateOrCreate(
-            ['user_id' => $user->id, 'session_id' => $sid],
-            [
-                'os' => $os,
-                'browser' => $browser,
-                'device_type' => $deviceType,
-                'device_name' => $deviceName,
-                'user_agent' => $request->userAgent(),
-                'ip_last' => $request->ip(),
-                'last_seen_at' => now(),
-                'expires_at' => now()->addMinutes((int) config('session.lifetime')),
-            ]
-        );
+        if ($sid) {
+            UserSession::updateOrCreate(
+                ['user_id' => $user->id, 'session_id' => $sid],
+                [
+                    'os' => $os,
+                    'browser' => $browser,
+                    'device_type' => $deviceType,
+                    'device_name' => $deviceName,
+                    'user_agent' => $request->userAgent(),
+                    'ip_last' => $request->ip(),
+                    'last_seen_at' => now(),
+                    'expires_at' => now()->addMinutes((int) config('session.lifetime')),
+                ]
+            );
 
-
-        // override pointer each time me is called
-        $user->forceFill([
-            'current_session_id' => $sid,
-            'current_session_set_at' => now(),
-        ]);
+            $user->forceFill([
+                'current_session_id' => $sid,
+                'current_session_set_at' => now(),
+            ])->save();
+        }
 
         return response()->json([
             'ok'   => true,
-            'user' => UserResource::make($request->user()->load('tenants')),
+            'user' => UserResource::make($user->load('tenants')),
         ]);
     }
 
