@@ -64,10 +64,6 @@ class ActionSeeder extends Seeder
                 'label' => 'Bypass policy on resource'
             ]
         ];
-
-        
-        Action::truncate();
-        
         Action::upsert($actions, [], []);
     }
 }

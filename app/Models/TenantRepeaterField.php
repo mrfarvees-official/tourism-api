@@ -10,6 +10,7 @@ class TenantRepeaterField extends Model
     use SoftDeletes;
 
     protected $table = 'tenant_repeater_fields';
+
     protected $fillable = [
         'tenant_id',
         'repeater_item_id',
@@ -17,24 +18,9 @@ class TenantRepeaterField extends Model
         'field_type',
         'value_string',
         'value_text',
-        'valute_int',
+        'value_int',
         'value_bool',
         'value_decimal',
-        'value_asset_id'
+        'value_asset_id',
     ];
-
-    public function tenant()
-    {
-        return $this->belongsTo(Tenant::class, 'tenant_id');
-    }
-
-    public function repeaterItem()
-    {
-        return $this->belongsTo(TenantComponentRepeaterItem::class, 'repeater_item_id');
-    }
-
-    public function asset()
-    {
-        return $this->belongsTo(TenantAssets::class, 'value_asset_id');
-    }
 }

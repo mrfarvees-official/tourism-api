@@ -17,24 +17,16 @@ class UserSeeder extends Seeder
     {
         $users = [
             [
-                'name' => config('app.owner.name'),
-                'email' => config('app.owner.email'),
-                'email_verified_at' => date('Y-m-d H:i:s'),
-                'password' => Hash::make(config('app.owner.password')),
-                'remember_token' => null
-            ],
-            [
-                'name' => 'John Wick',
-                'email' => 'john@gmail.com',
+                'name' => 'Saroath Farvees',
+                'email' => 'farvees@gmail.com',
                 'email_verified_at' => date('Y-m-d H:i:s'),
                 'password' => Hash::make('password'),
                 'remember_token' => null
             ]
         ];
 
-        
-        User::truncate();
-        
-        User::upsert($users, [], []);
+        foreach ($users as $user) {
+            User::create($user);
+        }
     }
 }

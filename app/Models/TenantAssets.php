@@ -15,9 +15,19 @@ class TenantAssets extends Model
         'kind',
         'disk',
         'path',
+        'public_id',
+        'secure_url',
+        'resource_type',
         'mime',
         'size',
-        'label'
+        'label',
+        'original_name',
+        'cloudinary_version',
+    ];
+
+    protected $casts = [
+        'size' => 'integer',
+        'cloudinary_version' => 'integer',
     ];
 
     public function tenant()

@@ -23,9 +23,7 @@ class PolicySubjectSeeder extends Seeder
             ]
         ];
 
-        
-        PolicySubject::truncate();
-        
+    
         PolicySubject::upsert($policy_subjects, [], []);
     }
 }

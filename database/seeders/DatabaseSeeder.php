@@ -19,11 +19,11 @@ class DatabaseSeeder extends Seeder
             RoleSeeder::class,
             UserSeeder::class,
             UserRoleSeeder::class,
-            ActionSeeder::class,
-            ResourceSeeder::class,
-            PermissionSeeder::class,
-            PolicySeeder::class,
-            PolicySubjectSeeder::class,
+            // ActionSeeder::class,
+            // ResourceSeeder::class,
+            // PermissionSeeder::class,
+            // PolicySeeder::class,
+            // PolicySubjectSeeder::class,
             // PolicyContextSeeder::class
         ]);
     }

@@ -54,6 +54,11 @@ class Tenant extends Model
         return $this->hasMany(TenantAssets::class, 'tenant_id');
     }
 
+    public function media()
+    {
+        return $this->assets()->where('kind', 'image');
+    }
+
     public function brand()
     {
         return $this->hasOne(TenantBranding::class, 'tenant_id');

@@ -31,9 +31,6 @@ class PermissionSeeder extends Seeder
                 ];
             }
         }
-
-        
-        Permission::truncate();
         
         Permission::upsert($permissions, [], []);
     }

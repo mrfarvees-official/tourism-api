@@ -23,8 +23,19 @@ class TenantPages extends Model
         'published_at'
     ];
 
+    protected $casts = [
+        'schema' => 'array',
+        'seo' => 'array',
+        'published_at' => 'datetime',
+    ];
+
     public function tenant()
     {
         return $this->belongsTo(Tenant::class, 'tenant_id');
+    }
+
+    public function components()
+    {
+        return $this->hasMany(TenantPageComponent::class, 'page_id');
     }
 }

@@ -29,9 +29,6 @@ class PolicyContextSeeder extends Seeder
                 'right_value_decimal' => null
             ]
         ];
-
-        
-        PolicyContext::truncate();
         
         PolicyContext::upsert($policy_contexts, [], []);
     }

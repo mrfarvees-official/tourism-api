@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Resources\ContentSchemaResource;
 use App\Models\ContentSchema;
 use App\Models\Tenant;
 use App\Models\TenantUser;
@@ -51,7 +52,52 @@ class ContentSchemaController extends Controller
         return response()->json([
             'ok' => true,
             'status' => 200,
-            'data' => $contents,
+            'data' => ContentSchemaResource::collection($contents),
+        ], 200);
+    }
+
+    public function available(Request $request)
+    {
+        $user = $request->user();
+
+        $request->validate([
+            'tenantKey' => ['required', 'string'],
+        ]);
+
+        $tenant = Tenant::where('key', $request->tenantKey)->first();
+
+        if (!$tenant) {
+            return response()->json([
+                'ok' => false,
+                'status' => 404,
+                'error' => 'Unknown tenant'
+            ], 404);
+        }
+
+        $tenantUser = TenantUser::query()
+            ->where('user_id', $user->id)
+            ->where('tenant_id', $tenant->id)
+            ->first();
+
+        if (!$tenantUser) {
+            return response()->json([
+                'ok' => false,
+                'status' => 404,
+                'error' => 'Unknown tenant user'
+            ], 404);
+        }
+
+        $contents = ContentSchema::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('status', 'enabled')
+            ->get();
+
+        $contents = $contents->filter(fn (ContentSchema $schema) => $this->schemaSourceKey($schema->schema) !== null);
+
+        return response()->json([
+            'ok' => true,
+            'status' => 200,
+            'data' => ContentSchemaResource::collection($contents),
         ], 200);
     }
 
@@ -111,39 +157,98 @@ class ContentSchemaController extends Controller
             $version = $this->compareVersion($foundLatestSchema->version, $request->version);
         }
 
-        unset($request['tenantKey']);
+        $payload = $request->except('tenantKey');
+        $sourceKey = $this->schemaSourceKey($payload['schema'] ?? null);
+        if (!$sourceKey) {
+            return response()->json([
+                'ok' => false,
+                'status' => 422,
+                'error' => 'schema.meta.sourceKey is required',
+            ], 422);
+        }
 
         ContentSchema::createOrRestore(
             [
                 'tenant_id' => $tenantId,
-                'name' => $request->name
+                'name' => $payload['name']
             ],
             [
-                'menu' => $request->menu,
-                'schema' => $request->schema,
+                'menu' => $payload['menu'],
+                'schema' => $payload['schema'],
                 'version' => $version,
-                'status' => $request->status
+                'status' => $payload['status']
             ]
         );
 
-        if ($request->status === "enabled") {
+        if ($payload['status'] === "enabled") {
             ContentSchema::query()
                 ->where('tenant_id', $tenantId)
-                ->where('name', $request->name)
+                ->where('name', $payload['name'])
                 ->whereNot('version', $version)
                 ->update([
                     'status' => 'disabled'
                 ]);
         }
 
+        $content = ContentSchema::query()
+            ->where('tenant_id', $tenantId)
+            ->where('name', $payload['name'])
+            ->where('version', $version)
+            ->first();
+
         return response()->json([
             'ok' => true,
             'status' => 200,
-            'message' => 'Schema has created'
+            'message' => 'Schema has created',
+            'data' => ContentSchemaResource::make($content),
         ]);
     }
 
-    public function show(Request $request, ContentSchema $content) {}
+    public function show(Request $request, ContentSchema $content)
+    {
+        $user = $request->user();
+
+        $request->validate([
+            'tenantKey' => ['required', 'string'],
+        ]);
+
+        $tenant = Tenant::where('key', $request->tenantKey)->first();
+
+        if (!$tenant) {
+            return response()->json([
+                'ok' => false,
+                'status' => 404,
+                'error' => 'Unknown tenant'
+            ], 404);
+        }
+
+        $tenantUser = TenantUser::query()
+            ->where('user_id', $user->id)
+            ->where('tenant_id', $tenant->id)
+            ->first();
+
+        if (!$tenantUser) {
+            return response()->json([
+                'ok' => false,
+                'status' => 404,
+                'error' => 'Unknown tenant user'
+            ], 404);
+        }
+
+        if ($content->tenant_id !== $tenant->id) {
+            return response()->json([
+                'ok' => false,
+                'status' => 401,
+                'error' => 'Unauthorized access'
+            ], 401);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'status' => 200,
+            'data' => ContentSchemaResource::make($content),
+        ], 200);
+    }
 
 
     public function update(Request $request, ContentSchema $content)
@@ -190,6 +295,14 @@ class ContentSchemaController extends Controller
 
         unset($data['tenantKey']);
 
+        if (array_key_exists('schema', $data) && !$this->schemaSourceKey($data['schema'])) {
+            return response()->json([
+                'ok' => false,
+                'status' => 422,
+                'error' => 'schema.meta.sourceKey is required',
+            ], 422);
+        }
+
         DB::transaction(function () use ($data, $content, $tenant) {
             $newName = $data['name'] ?? $content->name;
             $newStatus = $data['status'] ?? $content->status;
@@ -211,7 +324,8 @@ class ContentSchemaController extends Controller
         return response()->json([
             'ok' => true,
             'status' => 200,
-            'message' => 'Schema updated'
+            'message' => 'Schema updated',
+            'data' => ContentSchemaResource::make($content->fresh()),
         ], 200);
     }
 
@@ -261,7 +375,8 @@ class ContentSchemaController extends Controller
         return response()->json([
             'ok' => true,
             'status' => 200,
-            'message' => 'Schema deleted'
+            'message' => 'Schema deleted',
+            'data' => ContentSchemaResource::make($content),
         ]);
     }
 
@@ -283,5 +398,29 @@ class ContentSchemaController extends Controller
         $parts[$lastIndex] = (string) ((int) $parts[$lastIndex] + 1);
 
         return 'v' . implode('.', $parts);
+    }
+
+    private function schemaSourceKey(mixed $schema): ?string
+    {
+        if (is_string($schema)) {
+            $schema = json_decode($schema, true);
+        }
+
+        if (!is_array($schema)) {
+            return null;
+        }
+
+        $meta = $schema['meta'] ?? null;
+        if (!is_array($meta)) {
+            return null;
+        }
+
+        $sourceKey = $meta['sourceKey'] ?? null;
+        if (!is_string($sourceKey)) {
+            return null;
+        }
+
+        $sourceKey = trim($sourceKey);
+        return $sourceKey !== '' ? $sourceKey : null;
     }
 }

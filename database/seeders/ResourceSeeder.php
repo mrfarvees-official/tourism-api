@@ -54,9 +54,6 @@ class ResourceSeeder extends Seeder
 
         ];
 
-        
-        Resource::truncate();
-        
         Resource::upsert($resources, [], []);
     }
 }

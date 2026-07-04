@@ -22,18 +22,8 @@ class UserRoleSeeder extends Seeder
                 'status' => 'active',
                 'expires_at' => null
             ],
-            [
-                'tenant_id' => null,
-                'user_id' => 2,
-                'role_id' => 2,
-                'status' => 'active',
-                'expires_at' => null
-            ],
         ];
 
-        
-        UserRole::truncate();
-        
         UserRole::upsert($user_roles, [], []);
     }
 }

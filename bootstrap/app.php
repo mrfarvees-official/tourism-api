@@ -23,6 +23,7 @@ return Application::configure(basePath: dirname(__DIR__))
             EnsureFrontendRequestsAreStateful::class,
             EncryptCookies::class,
             AddQueuedCookiesToResponse::class,
+            StartSession::class,
             ShareErrorsFromSession::class,
             SubstituteBindings::class,
         ]);

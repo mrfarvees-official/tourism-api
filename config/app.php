@@ -125,5 +125,5 @@ return [
 
     'bypass_role' => [
         'system_developer',
-    ]
+    ],
 ];

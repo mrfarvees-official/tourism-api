@@ -27,8 +27,6 @@ class PolicySeeder extends Seeder
         ];
 
         
-        Policy::truncate();
-        
         Policy::upsert($policies, [], []);
     }
 }

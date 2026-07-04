@@ -65,8 +65,6 @@ class RoleSeeder extends Seeder
         ];
 
         
-        Role::truncate();
-        
         Role::upsert($roles, [], []);
     }
 }
