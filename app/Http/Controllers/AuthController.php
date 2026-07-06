@@ -301,7 +301,7 @@ class AuthController extends Controller
         do {
             $code = Str::lower(Str::random($length));
         } while (
-            Tenant::where('key', $code)->orWhere('name', $code)->exists()
+            Tenant::query()->where('key', $code)->orWhere('name', $code)->exists()
         );
 
         return $code;

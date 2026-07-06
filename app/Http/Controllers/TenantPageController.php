@@ -182,17 +182,26 @@ class TenantPageController extends Controller
         ]);
     }
 
-    public function destroy(Request $request, string $slug): JsonResponse
+    public function destroy(Request $request, ?string $slug = null): JsonResponse
     {
         $tenant = $this->resolveTenant($request);
         $this->assertTenantUser($request, $tenant);
+
+        $slug = $slug ?: $request->input('slug');
+        if (!$slug) {
+            return response()->json([
+                'ok' => false,
+                'status' => 400,
+                'error' => 'Page slug required',
+            ], 400);
+        }
 
         $page = TenantPages::query()
             ->where('tenant_id', $tenant->id)
             ->where('slug', $slug)
             ->firstOrFail();
 
-        $page->delete();
+        $page->delete($page->id);
 
         return response()->json([
             'ok' => true,

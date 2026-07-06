@@ -45,7 +45,7 @@ class TenantMediaController extends Controller
         $validated = $request->validate([
             'tenantKey' => ['required', 'string'],
             'label' => ['nullable', 'string', 'max:120'],
-            'file' => ['required', 'file', 'image', 'max:10240'],
+            'file' => ['required', 'file', 'max:10240'],
         ]);
 
         /** @var UploadedFile $file */

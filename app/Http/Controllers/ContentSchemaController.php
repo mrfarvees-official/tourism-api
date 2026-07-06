@@ -20,7 +20,7 @@ class ContentSchemaController extends Controller
             'tenantKey' => ['required', 'string'],
         ]);
 
-        $tenant = Tenant::where('key', $request->tenantKey)->first();
+        $tenant = Tenant::query()->where('key', $request->tenantKey)->first();
 
         if (!$tenant) {
             return response()->json([
@@ -64,7 +64,7 @@ class ContentSchemaController extends Controller
             'tenantKey' => ['required', 'string'],
         ]);
 
-        $tenant = Tenant::where('key', $request->tenantKey)->first();
+        $tenant = Tenant::query()->where('key', $request->tenantKey)->first();
 
         if (!$tenant) {
             return response()->json([
@@ -92,7 +92,9 @@ class ContentSchemaController extends Controller
             ->where('status', 'enabled')
             ->get();
 
-        $contents = $contents->filter(fn (ContentSchema $schema) => $this->schemaSourceKey($schema->schema) !== null);
+        // $contents = $contents->filter(fn (ContentSchema $schema) => $this->schemaSourceKey($schema->schema) !== null);
+
+                logger()->info('data', [$contents]);
 
         return response()->json([
             'ok' => true,
@@ -114,7 +116,7 @@ class ContentSchemaController extends Controller
             'status'    => ['required', 'string', 'in:enabled,disabled'],
         ]);
 
-        $tenant = Tenant::where('key', $request->tenantKey)->first();
+        $tenant = Tenant::query()->where('key', $request->tenantKey)->first();
 
         if (!$tenant) {
             return response()->json([
@@ -141,7 +143,7 @@ class ContentSchemaController extends Controller
 
         $foundLatestSchema = ContentSchema::query()
             ->where('tenant_id', $tenantId)
-            ->where('name', $request->name)
+            ->where('menu', $request->menu)
             ->get()
             ->sort(function ($a, $b) {
                 return version_compare(
@@ -167,23 +169,34 @@ class ContentSchemaController extends Controller
             ], 422);
         }
 
-        ContentSchema::createOrRestore(
-            [
-                'tenant_id' => $tenantId,
-                'name' => $payload['name']
-            ],
-            [
+        $content = ContentSchema::onlyTrashed()
+            ->where('tenant_id', $tenantId)
+            ->where('menu', $payload['menu'])
+            ->first();
+
+        if ($content) {
+            $content->restore();
+            $content->fill([
                 'menu' => $payload['menu'],
                 'schema' => $payload['schema'],
                 'version' => $version,
-                'status' => $payload['status']
-            ]
-        );
+                'status' => $payload['status'],
+            ])->save();
+        } else {
+            $content = ContentSchema::create([
+                'tenant_id' => $tenantId,
+                'name' => $payload['name'],
+                'menu' => $payload['menu'],
+                'schema' => $payload['schema'],
+                'version' => $version,
+                'status' => $payload['status'],
+            ]);
+        }
 
         if ($payload['status'] === "enabled") {
             ContentSchema::query()
                 ->where('tenant_id', $tenantId)
-                ->where('name', $payload['name'])
+                ->where('menu', $payload['menu'])
                 ->whereNot('version', $version)
                 ->update([
                     'status' => 'disabled'
@@ -192,7 +205,7 @@ class ContentSchemaController extends Controller
 
         $content = ContentSchema::query()
             ->where('tenant_id', $tenantId)
-            ->where('name', $payload['name'])
+            ->where('menu', $payload['menu'])
             ->where('version', $version)
             ->first();
 
@@ -212,7 +225,7 @@ class ContentSchemaController extends Controller
             'tenantKey' => ['required', 'string'],
         ]);
 
-        $tenant = Tenant::where('key', $request->tenantKey)->first();
+        $tenant = Tenant::query()->where('key', $request->tenantKey)->first();
 
         if (!$tenant) {
             return response()->json([
@@ -262,7 +275,7 @@ class ContentSchemaController extends Controller
             'schema' => ['sometimes', 'json']
         ]);
 
-        $tenant = Tenant::where('key', $request->tenantKey)->first();
+        $tenant = Tenant::query()->where('key', $request->tenantKey)->first();
 
         if (!$tenant) {
             return response()->json([
@@ -304,13 +317,13 @@ class ContentSchemaController extends Controller
         }
 
         DB::transaction(function () use ($data, $content, $tenant) {
-            $newName = $data['name'] ?? $content->name;
+            $newMenu = $data['menu'] ?? $content->menu;
             $newStatus = $data['status'] ?? $content->status;
 
             if ($newStatus === 'enabled') {
                 ContentSchema::query()
                     ->where('tenant_id', $tenant->id)
-                    ->where('name', $newName)
+                    ->where('menu', $newMenu)
                     ->where('id', '!=', $content->id)
                     ->update([
                         'status' => 'disabled',
@@ -338,7 +351,7 @@ class ContentSchemaController extends Controller
             'tenantKey' => ['required', 'string']
         ]);
 
-        $tenant = Tenant::where('key', $request->tenantKey)->first();
+        $tenant = Tenant::query()->where('key', $request->tenantKey)->first();
 
         if (!$tenant) {
             return response()->json([
