@@ -23,10 +23,9 @@ class Tenant extends Model
         'meta',
     ];
 
-    
     /**
      * Define many-to-many relationship with tenant_users
-     * 
+     *
      * @return array<Tenant>
      */
     public function users(): BelongsToMany
@@ -47,6 +46,11 @@ class Tenant extends Model
     public function theme()
     {
         return $this->hasOne(TenantTheme::class, 'tenant_id');
+    }
+
+    public function setting()
+    {
+        return $this->hasOne(TenantSetting::class, 'tenant_id');
     }
 
     public function assets()

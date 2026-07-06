@@ -31,6 +31,13 @@ class ContentSchemaResource extends JsonResource
 
     private function sourceKey(): ?string
     {
+        if (is_string($this->menu)) {
+            $menu = trim($this->menu);
+            if ($menu !== '') {
+                return $menu;
+            }
+        }
+
         $schema = $this->schema;
 
         if (is_string($schema)) {

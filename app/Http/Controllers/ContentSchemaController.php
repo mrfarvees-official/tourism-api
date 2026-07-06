@@ -415,6 +415,16 @@ class ContentSchemaController extends Controller
 
     private function schemaSourceKey(mixed $schema): ?string
     {
+        if (is_array($schema)) {
+            $menu = $schema['menu'] ?? null;
+            if (is_string($menu)) {
+                $menu = trim($menu);
+                if ($menu !== '') {
+                    return $menu;
+                }
+            }
+        }
+
         if (is_string($schema)) {
             $schema = json_decode($schema, true);
         }

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\ContentDataResource;
+use App\Http\Resources\ContentSchemaResource;
 use App\Models\ContentData;
 use App\Models\ContentDataChild;
 use App\Models\ContentDataChildField;
@@ -74,7 +75,10 @@ class ContentDataController extends Controller
         return response()->json([
             'ok' => true,
             'status' => 200,
-            'data' => ContentDataResource::collection($data),
+            'data' => [
+                'schema' => ContentSchemaResource::make($contentSchema),
+                'data' => ContentDataResource::collection($data),
+            ],
         ], 200);
     }
 

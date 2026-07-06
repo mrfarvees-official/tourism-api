@@ -29,7 +29,7 @@ class OrganizationProfileController extends Controller
         $tenant = Tenant::query()
             ->where('key', $tenantKey)
             ->with(['assets', 'brand', 'domain', 'theme', 'owner'])
-            ->get();
+            ->first();
 
         return response()->json([
             'ok' => true,

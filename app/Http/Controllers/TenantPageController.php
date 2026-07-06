@@ -47,24 +47,37 @@ class TenantPageController extends Controller
         $payload = $this->validatePagePayload($request);
         $schemaPayload = $payload['schema'] ?? [];
         $page = DB::transaction(function () use ($tenant, $payload, $schemaPayload) {
-            $page = TenantPages::updateOrCreate(
-                [
+            $page = TenantPages::withTrashed()
+                ->where('tenant_id', $tenant->id)
+                ->where('slug', $payload['slug'])
+                ->first();
+
+            $pageData = [
+                'title' => $payload['title'],
+                'schema' => $schemaPayload + [
+                    'components' => $payload['components'] ?? [],
+                ],
+                'seo' => $payload['seo'] ?? null,
+                'status' => $payload['status'] ?? 'published',
+                'meta_title' => $payload['meta_title'] ?? null,
+                'meta_description' => $payload['meta_description'] ?? null,
+                'og_asset_id' => $payload['og_asset_id'] ?? null,
+                'published_at' => $payload['published_at'] ?? now(),
+            ];
+
+            if ($page) {
+                $page->fill($pageData);
+                if (method_exists($page, 'trashed') && $page->trashed()) {
+                    $page->restore();
+                }
+                $page->save();
+            } else {
+                $page = TenantPages::create([
                     'tenant_id' => $tenant->id,
                     'slug' => $payload['slug'],
-                ],
-                [
-                    'title' => $payload['title'],
-                    'schema' => $schemaPayload + [
-                        'components' => $payload['components'] ?? [],
-                    ],
-                    'seo' => $payload['seo'] ?? null,
-                    'status' => $payload['status'] ?? 'published',
-                    'meta_title' => $payload['meta_title'] ?? null,
-                    'meta_description' => $payload['meta_description'] ?? null,
-                    'og_asset_id' => $payload['og_asset_id'] ?? null,
-                    'published_at' => $payload['published_at'] ?? now(),
-                ]
-            );
+                    ...$pageData,
+                ]);
+            }
 
             if (!empty($payload['components'])) {
                 $this->syncPageTree($tenant->id, $page, $payload['components'] ?? []);
@@ -88,12 +101,27 @@ class TenantPageController extends Controller
     public function show(Request $request, string $tenantKey, string $slug): JsonResponse
     {
         $tenant = $this->resolveTenant($request, $tenantKey);
+        $page = $this->resolvePublishedLivePage($tenant->id, $slug);
 
-        $page = TenantPages::query()
-            ->where('tenant_id', $tenant->id)
-            ->where('slug', $slug)
-            ->where('status', 'published')
-            ->first();
+        if (!$page) {
+            return response()->json([
+                'ok' => false,
+                'status' => 404,
+                'error' => 'Page not found',
+            ], 404);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'status' => 200,
+            'data' => $this->hydratePage($page, true),
+        ]);
+    }
+
+    public function showDefault(Request $request, string $tenantKey): JsonResponse
+    {
+        $tenant = $this->resolveTenant($request, $tenantKey);
+        $page = $this->resolvePublishedLivePage($tenant->id, null);
 
         if (!$page) {
             return response()->json([
@@ -266,6 +294,51 @@ class TenantPageController extends Controller
         }
 
         return $tenant;
+    }
+
+    private function resolvePublishedLivePage(int $tenantId, ?string $slug): ?TenantPages
+    {
+        if (is_string($slug) && $slug !== '') {
+            $page = TenantPages::query()
+                ->where('tenant_id', $tenantId)
+                ->where('slug', $slug)
+                ->where('status', 'published')
+                ->first();
+
+            if ($page) {
+                return $page;
+            }
+
+            $page = TenantPages::query()
+                ->where('tenant_id', $tenantId)
+                ->where('slug', $slug)
+                ->first();
+
+            if ($page) {
+                return $page;
+            }
+
+            if ($slug !== 'home') {
+                return null;
+            }
+        }
+
+        $page = TenantPages::query()
+            ->where('tenant_id', $tenantId)
+            ->where('status', 'published')
+            ->orderByRaw("CASE WHEN slug = 'home' THEN 0 ELSE 1 END")
+            ->orderByDesc('updated_at')
+            ->first();
+
+        if ($page) {
+            return $page;
+        }
+
+        return TenantPages::query()
+            ->where('tenant_id', $tenantId)
+            ->orderByRaw("CASE WHEN slug = 'home' THEN 0 ELSE 1 END")
+            ->orderByDesc('updated_at')
+            ->first();
     }
 
     private function assertTenantUser(Request $request, Tenant $tenant): void
@@ -848,3 +921,4 @@ class TenantPageController extends Controller
         return $schema;
     }
 }
+

@@ -7,11 +7,14 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class TenantSetting extends Model
 {
+    protected $casts = [
+        'settings' => 'array',
+    ];
     use SoftDeletes;
 
     protected $table = 'tenant_settings';
     protected $fillable = [
-        'tenat_id',
+        'tenant_id',
         'settings'
     ];
 
@@ -20,3 +23,4 @@ class TenantSetting extends Model
         return $this->belongsTo(Tenant::class, 'tenant_id');
     }
 }
+
