@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
+use Illuminate\Validation\ValidationException;
 use Jenssegers\Agent\Agent;
 
 class AuthController extends Controller
@@ -30,6 +31,7 @@ class AuthController extends Controller
             'name'     => ['required', 'string', 'max:100'],
             'email'    => ['required', 'email', 'max:190', 'unique:users,email'],
             'password' => ['required', 'confirmed', Password::defaults()],
+            'tenantKey' => ['nullable', 'string', 'max:100'],
             'device_name'  => ['nullable', 'string', 'max:120'],
             'browser_name' => ['nullable', 'string', 'max:40'],
             'os_name'      => ['nullable', 'string', 'max:40'],
@@ -42,6 +44,26 @@ class AuthController extends Controller
                 'email'    => $validated['email'],
                 'password' => Hash::make($validated['password']),
             ]);
+
+            if (!empty($validated['tenantKey'])) {
+                $tenant = Tenant::query()->where('key', $validated['tenantKey'])->first();
+                if (!$tenant) {
+                    throw ValidationException::withMessages([
+                        'tenantKey' => ['Unknown tenant.'],
+                    ]);
+                }
+
+                $tenant->users()->syncWithoutDetaching([
+                    $user->id => [
+                        'role' => 'customer',
+                        'status' => 'active',
+                        'joined_at' => now(),
+                        'invited_by_user_id' => $user->id,
+                    ],
+                ]);
+
+                return $user;
+            }
 
             // Create initial tenant with random 8-char key/name
             $tenant = Tenant::create([

@@ -901,8 +901,75 @@ class TenantPageController extends Controller
             ->values();
 
         $data['components'] = $components;
+        $data['content_datas'] = $this->hydrateContentDatas($page);
 
         return $data;
+    }
+
+    private function hydrateContentDatas(TenantPages $page): array
+    {
+        return ContentData::query()
+            ->with(['contentSchema', 'children.fields'])
+            ->whereHas('contentSchema', function ($query) use ($page) {
+                $query->where('tenant_id', $page->tenant_id);
+            })
+            ->get()
+            ->filter(function (ContentData $contentData) use ($page): bool {
+                return data_get($contentData->data, 'page_slug') === $page->slug;
+            })
+            ->map(function (ContentData $contentData) {
+                return [
+                    'id' => $contentData->id,
+                    'content_schema_id' => $contentData->content_schema_id,
+                    'content_schema_menu' => $contentData->contentSchema?->menu,
+                    'schema_blueprint' => $contentData->contentSchema?->schema,
+                    'data' => $contentData->data,
+                    'children' => $contentData->children->map(function (ContentDataChild $child) {
+                        return [
+                            'id' => $child->id,
+                            'source_key' => $child->source_key,
+                            'row_key' => $child->row_key,
+                            'sort_order' => $child->sort_order,
+                            'payload' => $child->payload,
+                            'data' => $this->childFieldMap($child),
+                            'fields' => $child->fields->map(fn (ContentDataChildField $field) => [
+                                'id' => $field->id,
+                                'field_key' => $field->field_key,
+                                'source_column' => $field->source_column,
+                                'field_type' => $field->field_type,
+                                'value_string' => $field->value_string,
+                                'value_text' => $field->value_text,
+                                'value_int' => $field->value_int,
+                                'value_bool' => $field->value_bool,
+                                'value_decimal' => $field->value_decimal,
+                                'value_asset_id' => $field->value_asset_id,
+                            ])->values(),
+                        ];
+                    })->values(),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function childFieldMap(ContentDataChild $child): array
+    {
+        $mapped = [];
+        foreach ($child->fields as $field) {
+            $sourceKey = $field->source_column ?: $field->field_key;
+            if (!$sourceKey) {
+                continue;
+            }
+
+            $mapped[$sourceKey] = $field->value_bool
+                ?? $field->value_int
+                ?? $field->value_decimal
+                ?? $field->value_string
+                ?? $field->value_text
+                ?? $field->value_asset_id;
+        }
+
+        return $mapped ?: ($child->payload ?? []);
     }
 
     private function normalizePageSchema(?array $schema): ?array
@@ -921,4 +988,3 @@ class TenantPageController extends Controller
         return $schema;
     }
 }
-

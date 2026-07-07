@@ -6,12 +6,15 @@ use App\Http\Controllers\ContentDataController;
 use App\Http\Controllers\ContentSchemaController;
 use App\Http\Controllers\DeviceSessionController;
 use App\Http\Controllers\OrganizationProfileController;
+use App\Http\Controllers\DestinationController;
 use App\Http\Controllers\TenantContactInquiryController;
 use App\Http\Controllers\TenantContactSettingsController;
 use App\Http\Controllers\TenantCustomerIntakeMailController;
 use App\Http\Controllers\TenantDashboardController;
 use App\Http\Controllers\TenantMediaController;
 use App\Http\Controllers\TenantPageController;
+use App\Http\Controllers\TourismBusinessController;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 // Auth routes
@@ -59,8 +62,39 @@ Route::middleware('auth:sanctum', 'tracked')->get('/tenant/media', [TenantMediaC
 Route::middleware('auth:sanctum', 'tracked')->post('/tenant/media', [TenantMediaController::class, 'store']);
 Route::middleware('auth:sanctum', 'tracked')->delete('/tenant/media/{asset}', [TenantMediaController::class, 'destroy'])->whereNumber('asset');
 
+// Destination CRUD
+Route::middleware('auth:sanctum', 'tracked')->get('/admin/destinations', [DestinationController::class, 'index']);
+Route::middleware('auth:sanctum', 'tracked')->post('/admin/destinations', [DestinationController::class, 'store']);
+Route::middleware('auth:sanctum', 'tracked')->get('/admin/destinations/{destination}', [DestinationController::class, 'show'])->whereNumber('destination');
+Route::middleware('auth:sanctum', 'tracked')->patch('/admin/destinations/{destination}', [DestinationController::class, 'update'])->whereNumber('destination');
+Route::middleware('auth:sanctum', 'tracked')->delete('/admin/destinations/{destination}', [DestinationController::class, 'destroy'])->whereNumber('destination');
+
 // Live render
 Route::post('/live/{tenantKey}/contact', [TenantContactInquiryController::class, 'store']);
 Route::post('/live/{tenantKey}/customer-intake/send', [TenantCustomerIntakeMailController::class, 'send']);
 Route::get('/live/{tenantKey}', [TenantPageController::class, 'showDefault']);
 Route::get('/live/{tenantKey}/{slug}', [TenantPageController::class, 'show']);
+
+// Tourism business platform bridge
+Route::get('/public/{tenantKey}/destinations', [DestinationController::class, 'publicIndex']);
+Route::get('/public/{tenantKey}/destinations/{slug}', [DestinationController::class, 'publicShow']);
+Route::get('/public/{tenantKey}/{resource}', [TourismBusinessController::class, 'publicIndex'])
+    ->whereIn('resource', ['packages', 'services', 'activities', 'reviews']);
+Route::get('/public/{tenantKey}/{resource}/{slug}', [TourismBusinessController::class, 'publicShow'])
+    ->whereIn('resource', ['packages', 'services', 'activities']);
+Route::post('/public/{tenantKey}/bookings', [TourismBusinessController::class, 'storeBooking']);
+Route::post('/public/{tenantKey}/inquiries', [TourismBusinessController::class, 'storeInquiry']);
+
+Route::get('/customer/dashboard', [TourismBusinessController::class, 'customerDashboard']);
+Route::get('/customer/bookings', [TourismBusinessController::class, 'customerBookings']);
+Route::get('/customer/bookings/{bookingReference}', [TourismBusinessController::class, 'customerBookingShow']);
+Route::match(['get', 'patch'], '/customer/profile', [TourismBusinessController::class, 'customerProfile']);
+Route::match(['get', 'post'], '/customer/reviews', [TourismBusinessController::class, 'customerReviews']);
+
+Route::middleware(['auth:sanctum', 'tracked'])->group(function () {
+    Route::prefix('admin')->group(function () {
+        Route::get('/business-dashboard', [TourismBusinessController::class, 'dashboard']);
+        Route::get('/{resource}', [TourismBusinessController::class, 'adminIndex'])
+            ->whereIn('resource', ['packages', 'service-categories', 'tourism-services', 'activities', 'accommodations', 'transport-options', 'bookings', 'inquiries', 'reviews']);
+    });
+});

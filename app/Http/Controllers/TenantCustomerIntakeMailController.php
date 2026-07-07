@@ -96,8 +96,8 @@ class TenantCustomerIntakeMailController extends Controller
             note: $note,
         );
 
-        Mail::mailer('smtp')->html($html, function ($message) use ($recipientEmail, $replyToEmail, $subject, $senderName, $customerName) {
-            $message->to($recipientEmail, $customerName)->subject($subject);
+        Mail::mailer('smtp')->raw($html, function ($message) use ($recipientEmail, $replyToEmail, $subject, $senderName, $customerName, $html) {
+            $message->to($recipientEmail, $customerName)->subject($subject)->setBody($html, 'text/html');
 
             if ($replyToEmail !== '') {
                 $message->replyTo($replyToEmail, $senderName);

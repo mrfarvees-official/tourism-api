@@ -30,7 +30,7 @@ class Tenant extends Model
      */
     public function users(): BelongsToMany
     {
-        return $this->belongsToMany(Tenant::class, 'tenant_user', 'tenant_id', 'user_id')
+        return $this->belongsToMany(User::class, 'tenant_user', 'tenant_id', 'user_id')
             ->using(TenantUser::class)
             ->withPivot([
                 'role',
