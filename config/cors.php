@@ -17,6 +17,8 @@ return [
 
     'paths' => [
         'api/*', 
+        'login',
+        'logout',
         'sanctum/csrf-cookie', 
         'auth/*',
     ],
@@ -28,6 +30,7 @@ return [
     'allowed_origins_patterns' => [
         '/^http:\/\/lvh\.me:3000$/',
         '/^http:\/\/[a-z0-9-]+\.lvh\.me:3000$/',
+        'http://20.205.234.144:3000'
     ],
 
     'allowed_headers' => ['*'],
