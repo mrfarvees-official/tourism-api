@@ -57,3 +57,18 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+## Docker
+
+This repo includes an IP-safe Docker setup for shared servers where port 80 is already in use.
+
+1. Copy [.env.docker.example](./.env.docker.example) to `.env.docker`.
+2. Set `APP_URL`, `APP_PORT`, `SANCTUM_STATEFUL_DOMAINS`, and `CORS_ALLOWED_DOMAINS` for your server IP and frontend port.
+3. Run:
+
+```bash
+docker compose -f docker-compose.ip.yml --env-file .env.docker -p tourism-api-ip up -d --build
+```
+
+4. Open the API at `http://YOUR_SERVER_IP:8001` or whatever `HOST_PORT` you choose.
+
+The stack does not use `container_name`, so it can coexist with other Docker containers on the same host.
