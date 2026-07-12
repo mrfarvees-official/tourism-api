@@ -2,15 +2,12 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\ContentData;
-use App\Models\ContentSchema;
 use App\Models\Tenant;
+use App\Models\TenantInboxMessage;
 use App\Models\TenantSetting;
-use Illuminate\Support\Arr;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
 class TenantContactInquiryController extends Controller
@@ -125,53 +122,26 @@ HTML;
 
     private function storeInquiryRecord(Tenant $tenant, array $validated, mixed $pageSlug): void
     {
-        DB::transaction(function () use ($tenant, $validated, $pageSlug) {
-            $schema = ContentSchema::query()
-                ->where('tenant_id', $tenant->id)
-                ->whereIn('menu', ['inbox', 'contact', 'contacts', 'inquiries', 'enquiries', 'leads'])
-                ->orderByDesc('updated_at')
-                ->first();
+        $page = is_string($pageSlug) ? trim($pageSlug) : '';
+        $message = trim((string) ($validated['message'] ?? ''));
+        $name = trim((string) ($validated['name'] ?? ''));
 
-            if (!$schema) {
-                $schema = ContentSchema::create([
-                    'tenant_id' => $tenant->id,
-                    'name' => 'Contact inbox',
-                    'menu' => 'inbox',
-                    'schema' => json_encode([
-                        'meta' => [
-                            'sourceKey' => 'inbox',
-                        ],
-                        'columns' => [
-                            ['key' => 'name', 'label' => 'Name'],
-                            ['key' => 'email', 'label' => 'Email'],
-                            ['key' => 'phone', 'label' => 'Phone'],
-                            ['key' => 'message', 'label' => 'Message'],
-                        ],
-                    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-                    'version' => 'v1',
-                    'status' => 'enabled',
-                ]);
-            }
-
-            $page = is_string($pageSlug) ? trim($pageSlug) : '';
-            $message = trim((string) ($validated['message'] ?? ''));
-            $name = trim((string) ($validated['name'] ?? ''));
-
-            ContentData::create([
-                'content_schema_id' => $schema->id,
-                'data' => [
-                    'title' => sprintf('Contact inquiry from %s', $name !== '' ? $name : 'customer'),
-                    'name' => $name,
-                    'email' => trim((string) ($validated['email'] ?? '')),
-                    'phone' => trim((string) ($validated['phone'] ?? '')),
-                    'subject' => sprintf('Contact inquiry from %s', $name !== '' ? $name : 'customer'),
-                    'message' => $message,
-                    'page_slug' => $page !== '' ? $page : null,
-                    'source' => 'website-contact-form',
-                    'status' => 'new',
-                    'submitted_at' => Carbon::now()->toISOString(),
-                ],
-            ]);
-        });
+        TenantInboxMessage::create([
+            'tenant_id' => $tenant->id,
+            'name' => $name !== '' ? $name : null,
+            'email' => trim((string) ($validated['email'] ?? '')),
+            'phone' => trim((string) ($validated['phone'] ?? '')) ?: null,
+            'subject' => sprintf('Contact inquiry from %s', $name !== '' ? $name : 'customer'),
+            'message' => $message,
+            'page_slug' => $page !== '' ? $page : null,
+            'source' => 'website-contact-form',
+            'status' => 'new',
+            'read_at' => null,
+            'replied_at' => null,
+            'meta' => [
+                'submitted_at' => Carbon::now()->toISOString(),
+                'tenant_name' => $tenant->name,
+            ],
+        ]);
     }
 }

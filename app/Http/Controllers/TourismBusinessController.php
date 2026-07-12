@@ -4,7 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\ContentData;
 use App\Models\ContentSchema;
+use App\Models\Booking;
+use App\Models\TourismActivity;
 use App\Models\Destination;
+use App\Models\TourismPackage;
+use App\Models\TourismService;
 use App\Models\Tenant;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -32,6 +36,58 @@ class TourismBusinessController extends Controller
     private function tenant(string $tenantKey): ?Tenant
     {
         return Tenant::query()->where('key', $tenantKey)->first();
+    }
+
+    private function requestedVariant(Request $request): ?string
+    {
+        $variant = trim((string) $request->query('variant', ''));
+        return $variant !== '' ? $variant : null;
+    }
+
+    private function normalizePublicResource(string $resource): string
+    {
+        return match (strtolower(trim($resource))) {
+            'destination',
+            'destinations',
+            'destination_collection' => 'destinations',
+            'tour_package',
+            'tour-packages',
+            'package',
+            'packages',
+            'featured-tour-packages',
+            'featured-tour-package',
+            'tour-highlight',
+            'trip-hotspots',
+            'recommended-tours' => 'packages',
+            'service',
+            'services',
+            'tourism-service',
+            'tourism-services',
+            'service-categories',
+            'accommodations',
+            'transport-options' => 'services',
+            default => strtolower(trim($resource)),
+        };
+    }
+
+    private function resourceItems(string $tenantKey, string $resource, ?string $variant = null): array
+    {
+        $key = $this->normalizePublicResource($resource);
+        $tenant = $this->tenant($tenantKey);
+        $items = $this->catalogRows($key, $tenant, $variant);
+
+        if ($items !== []) {
+            return $items;
+        }
+
+        $data = $this->publicData();
+        $items = $data[$key] ?? [];
+
+        if ($variant !== 'featured') {
+            return $items;
+        }
+
+        return array_values(array_filter($items, static fn (array $item) => (bool) ($item['featured'] ?? false)));
     }
 
     private function schemaBlueprint(?string $schema): array
@@ -110,45 +166,226 @@ class TourismBusinessController extends Controller
         ];
     }
 
-    private function destinationRecordsForTenant(string $tenantKey): ?array
+    private function catalogModelClass(string $resource): ?string
     {
-        return null;
+        return match ($resource) {
+            'packages' => TourismPackage::class,
+            'services' => TourismService::class,
+            'activities' => TourismActivity::class,
+            default => null,
+        };
     }
 
-    private function publicData(): array
+    private function seedCatalogTenant(Tenant $tenant, string $resource): void
     {
-        return [
-            'destinations' => [
-                ['id' => 1, 'slug' => 'sigiriya', 'title' => 'Sigiriya', 'subtitle' => 'Cultural triangle', 'description' => 'Guided heritage visits, village lunches, and nearby nature stops.', 'status' => 'active'],
-                ['id' => 2, 'slug' => 'ella', 'title' => 'Ella', 'subtitle' => 'Hill country', 'description' => 'Rail journeys, tea trails, waterfalls, and relaxed boutique stays.', 'status' => 'active'],
-                ['id' => 3, 'slug' => 'mirissa', 'title' => 'Mirissa', 'subtitle' => 'South coast', 'description' => 'Beach breaks, whale watching, seafood dining, and coastal transfers.', 'status' => 'active'],
-            ],
+        $modelClass = $this->catalogModelClass($resource);
+        if (!$modelClass) {
+            return;
+        }
+
+        if ($modelClass::query()->where('tenant_id', $tenant->id)->exists()) {
+            return;
+        }
+
+        foreach ($modelClass::defaultSeedRows() as $row) {
+            $modelClass::query()->updateOrCreate(
+                [
+                    'tenant_id' => $tenant->id,
+                    'slug' => $row['slug'],
+                ],
+                array_merge($row, [
+                    'tenant_id' => $tenant->id,
+                ]),
+            );
+        }
+    }
+
+    private function catalogRows(string $resource, ?Tenant $tenant = null, ?string $variant = null): array
+    {
+        $tenant = $tenant ?? $this->tenant('lanka-trails');
+        $modelClass = $this->catalogModelClass($resource);
+
+        if (!$tenant || !$modelClass) {
+            return [];
+        }
+
+        $this->seedCatalogTenant($tenant, $resource);
+
+        $query = $modelClass::query()->where('tenant_id', $tenant->id)->where('status', 'active');
+        if ($variant === 'featured') {
+            $query->where('featured', true);
+        }
+
+        return $query->latest('id')->get()->map(fn ($record) => $record->toTourismArray())->values()->all();
+    }
+
+    private function catalogRequestMap(string $resource): array
+    {
+        return match ($resource) {
             'packages' => [
-                ['id' => 1, 'slug' => 'sri-lanka-highlights', 'title' => 'Sri Lanka Highlights', 'subtitle' => '7 days / 6 nights', 'description' => 'Culture, tea country, wildlife, and coast in one practical itinerary.', 'status' => 'active', 'amount' => 'LKR 185,000'],
-                ['id' => 2, 'slug' => 'hill-country-weekend', 'title' => 'Hill Country Weekend', 'subtitle' => '3 days / 2 nights', 'description' => 'A compact private trip with train scenery, hikes, and tea estates.', 'status' => 'active', 'amount' => 'LKR 72,000'],
+                'slug' => 'slug',
+                'name' => 'package_name',
+                'description' => 'description',
+                'type' => 'duration',
+                'coverage' => 'route_summary',
+                'vehicle' => 'inclusions',
+                'response_time' => 'best_for',
+                'pricing_model' => 'pace',
+                'story' => 'story',
+                'season' => 'highlights',
             ],
             'services' => [
-                ['id' => 1, 'slug' => 'airport-transfer', 'title' => 'Airport Transfer', 'subtitle' => 'Fixed price', 'description' => 'Private airport pickup and drop-off with vehicle size options.', 'status' => 'active', 'amount' => 'LKR 14,500'],
-                ['id' => 2, 'slug' => 'private-chauffeur', 'title' => 'Private Chauffeur', 'subtitle' => 'Per day', 'description' => 'Full-day driver service for multi-stop routes and custom itineraries.', 'status' => 'active', 'amount' => 'LKR 22,000'],
+                'slug' => 'slug',
+                'name' => 'service_name',
+                'description' => 'description',
+                'type' => 'service_type',
+                'coverage' => 'coverage',
+                'vehicle' => 'vehicle',
+                'response_time' => 'response_time',
+                'pricing_model' => 'pricing_model',
+                'story' => 'story',
             ],
             'activities' => [
-                ['id' => 1, 'slug' => 'tea-estate-walk', 'title' => 'Tea Estate Walk', 'subtitle' => '2 hours', 'description' => 'Guided estate walk with tea tasting and local host storytelling.', 'status' => 'active', 'amount' => 'LKR 8,500'],
-                ['id' => 2, 'slug' => 'whale-watching', 'title' => 'Whale Watching', 'subtitle' => 'Half day', 'description' => 'Seasonal ocean experience with pickup support from south coast stays.', 'status' => 'active', 'amount' => 'LKR 18,000'],
+                'slug' => 'slug',
+                'name' => 'activity_name',
+                'description' => 'description',
+                'type' => 'activity_type',
+                'coverage' => 'duration',
+                'vehicle' => 'best_for',
+                'response_time' => 'pace',
+                'pricing_model' => 'season',
+                'story' => 'story',
             ],
-            'bookings' => [
-                ['id' => 101, 'booking_reference' => 'TBK-2026-000101', 'title' => 'TBK-2026-000101', 'subtitle' => 'Sri Lanka Highlights', 'description' => 'Ayesha Khan, 2 adults, travel date 2026-08-14.', 'status' => 'confirmed', 'payment_status' => 'unpaid', 'amount' => 'LKR 370,000'],
-                ['id' => 102, 'booking_reference' => 'TBK-2026-000102', 'title' => 'TBK-2026-000102', 'subtitle' => 'Hill Country Weekend', 'description' => 'Daniel Perera, 1 adult and 1 child, travel date 2026-08-22.', 'status' => 'pending', 'payment_status' => 'unpaid', 'amount' => 'LKR 116,000'],
+            default => [],
+        };
+    }
+
+    private function catalogValidationRules(string $resource): array
+    {
+        return match ($resource) {
+            'packages' => [
+                'slug' => ['nullable', 'string', 'max:255'],
+                'name' => ['required', 'string', 'max:255'],
+                'description' => ['nullable', 'string'],
+                'type' => ['nullable', 'string', 'max:255'],
+                'coverage' => ['nullable', 'string', 'max:255'],
+                'vehicle' => ['nullable', 'string', 'max:255'],
+                'response_time' => ['nullable', 'string', 'max:255'],
+                'pricing_model' => ['nullable', 'string', 'max:255'],
+                'story' => ['nullable', 'string'],
+                'season' => ['nullable', 'string'],
+                'price_label' => ['nullable', 'string', 'max:255'],
+                'price_value' => ['nullable', 'integer'],
+                'image_url' => ['nullable', 'string', 'max:2048'],
+                'featured' => ['nullable', 'boolean'],
+                'status' => ['required', 'string', 'max:32'],
             ],
-            'inquiries' => [
-                ['id' => 201, 'slug' => 'inquiry-201', 'title' => 'Custom honeymoon request', 'subtitle' => 'New inquiry', 'description' => 'Looking for a 9 day private trip with hill country and south coast.', 'status' => 'pending'],
+            'services' => [
+                'slug' => ['nullable', 'string', 'max:255'],
+                'name' => ['required', 'string', 'max:255'],
+                'description' => ['nullable', 'string'],
+                'type' => ['nullable', 'string', 'max:255'],
+                'coverage' => ['nullable', 'string', 'max:255'],
+                'vehicle' => ['nullable', 'string', 'max:255'],
+                'response_time' => ['nullable', 'string', 'max:255'],
+                'pricing_model' => ['nullable', 'string', 'max:255'],
+                'story' => ['nullable', 'string'],
+                'price_label' => ['nullable', 'string', 'max:255'],
+                'price_value' => ['nullable', 'integer'],
+                'image_url' => ['nullable', 'string', 'max:2048'],
+                'featured' => ['nullable', 'boolean'],
+                'status' => ['required', 'string', 'max:32'],
             ],
-            'reviews' => [
-                ['id' => 301, 'slug' => 'review-301', 'title' => 'Excellent planning', 'subtitle' => '5 stars', 'description' => 'The team handled the route, transport, and hotel changes clearly.', 'status' => 'approved'],
+            'activities' => [
+                'slug' => ['nullable', 'string', 'max:255'],
+                'name' => ['required', 'string', 'max:255'],
+                'description' => ['nullable', 'string'],
+                'type' => ['nullable', 'string', 'max:255'],
+                'coverage' => ['nullable', 'string', 'max:255'],
+                'vehicle' => ['nullable', 'string', 'max:255'],
+                'response_time' => ['nullable', 'string', 'max:255'],
+                'pricing_model' => ['nullable', 'string', 'max:255'],
+                'story' => ['nullable', 'string'],
+                'price_label' => ['nullable', 'string', 'max:255'],
+                'price_value' => ['nullable', 'integer'],
+                'image_url' => ['nullable', 'string', 'max:2048'],
+                'featured' => ['nullable', 'boolean'],
+                'status' => ['required', 'string', 'max:32'],
+            ],
+            default => [],
+        };
+    }
+
+    private function catalogPayload(array $validated, string $resource, Tenant $tenant, ?int $id = null): array
+    {
+        $map = $this->catalogRequestMap($resource);
+        $slug = trim((string) ($validated['slug'] ?? ''));
+        $name = trim((string) ($validated['name'] ?? ''));
+        $generatedSlug = \Illuminate\Support\Str::slug($name);
+
+        $payload = [
+            'tenant_id' => $tenant->id,
+            'slug' => $slug !== ''
+                ? $slug
+                : ($generatedSlug !== '' ? $generatedSlug : ($resource . '-' . ($id ?? random_int(1000, 9999)))),
+            'description' => (string) ($validated['description'] ?? ''),
+            'price_label' => (string) ($validated['price_label'] ?? ''),
+            'price_value' => (int) ($validated['price_value'] ?? 0),
+            'image_url' => (string) ($validated['image_url'] ?? ''),
+            'featured' => (bool) ($validated['featured'] ?? false),
+            'status' => (string) ($validated['status'] ?? 'active'),
+        ];
+
+        foreach ($map as $input => $column) {
+            if (!array_key_exists($input, $validated)) {
+                continue;
+            }
+
+            if ($input === 'slug' || $input === 'status') {
+                continue;
+            }
+
+            $payload[$column] = $validated[$input];
+        }
+
+        return $payload;
+    }
+
+    private function catalogEntry(string $resource, Tenant $tenant, int|string $id)
+    {
+        $modelClass = $this->catalogModelClass($resource);
+        if (!$modelClass) {
+            return null;
+        }
+
+        return $modelClass::query()
+            ->where('tenant_id', $tenant->id)
+            ->whereKey($id)
+            ->first();
+    }
+
+    private function catalogPaginatedResponse(array $items, Request $request): array
+    {
+        $page = max(1, (int) $request->integer('page', 1));
+        $perPage = max(1, min((int) $request->integer('per_page', 10), 50));
+        $total = count($items);
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $page = min($page, $lastPage);
+        $offset = ($page - 1) * $perPage;
+        $pageItems = array_slice($items, $offset, $perPage);
+
+        return [
+            'items' => array_values($pageItems),
+            'meta' => [
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'last_page' => $lastPage,
             ],
         ];
     }
 
-    private function customerData(): array
+    private function publicData(): array
     {
         return [
             'tenant' => [
@@ -264,8 +501,93 @@ class TourismBusinessController extends Controller
         ];
     }
 
-    private function bookingSummary(array $booking): array
+    private function customerData(): array
     {
+        $data = $this->publicData();
+
+        $data['inquiries'] = [
+            [
+                'id' => 'inq_001',
+                'name' => 'Ayesha Khan',
+                'email' => 'ayesha.khan@example.com',
+                'message' => 'Need help planning a cultural triangle trip.',
+                'status' => 'new',
+                'createdAt' => '2026-07-09T08:15:00.000Z',
+            ],
+            [
+                'id' => 'inq_002',
+                'name' => 'Maya Silva',
+                'email' => 'maya.silva@example.com',
+                'message' => 'Looking for a coastal family package in August.',
+                'status' => 'new',
+                'createdAt' => '2026-07-10T10:40:00.000Z',
+            ],
+        ];
+
+        return $data;
+    }
+
+    private function seedCustomerBookings(Tenant $tenant): void
+    {
+        if (Booking::query()->where('tenant_id', $tenant->id)->exists()) {
+            return;
+        }
+
+        foreach (Booking::defaultSeedRows() as $row) {
+            Booking::query()->updateOrCreate(
+                [
+                    'tenant_id' => $tenant->id,
+                    'reference' => $row['reference'],
+                ],
+                array_merge($row, [
+                    'tenant_id' => $tenant->id,
+                ]),
+            );
+        }
+    }
+
+    private function customerBookingsList(): array
+    {
+        $tenant = $this->tenant('lanka-trails');
+        if (!$tenant) {
+            return $this->customerData()['bookings'];
+        }
+
+        $this->seedCustomerBookings($tenant);
+
+        return Booking::query()
+            ->where('tenant_id', $tenant->id)
+            ->latest('id')
+            ->get()
+            ->map(fn (Booking $booking) => $booking->toCustomerSummaryArray())
+            ->values()
+            ->all();
+    }
+
+    private function customerBookingRecord(string $bookingReference): ?Booking
+    {
+        $tenant = $this->tenant('lanka-trails');
+        if (!$tenant) {
+            return null;
+        }
+
+        $this->seedCustomerBookings($tenant);
+
+        return Booking::query()
+            ->where('tenant_id', $tenant->id)
+            ->where(function ($query) use ($bookingReference) {
+                $query->where('reference', $bookingReference)
+                    ->orWhere('id', $bookingReference);
+            })
+            ->first();
+    }
+
+    private function bookingSummary(array|Booking $booking): array
+    {
+        if ($booking instanceof Booking) {
+            return $booking->toCustomerSummaryArray();
+        }
+
         return [
             'id' => $booking['id'],
             'reference' => $booking['reference'],
@@ -298,7 +620,7 @@ class TourismBusinessController extends Controller
     public function customerDashboard(Request $request): JsonResponse
     {
         $data = $this->customerData();
-        $bookings = array_map(fn (array $booking) => $this->bookingSummary($booking), $data['bookings']);
+        $bookings = $this->customerBookingsList();
         $reviews = $data['reviews'];
         $nextTrip = $bookings[0] ?? null;
 
@@ -367,21 +689,25 @@ class TourismBusinessController extends Controller
 
     public function customerBookings(Request $request): JsonResponse
     {
-        $bookings = array_map(fn (array $booking) => $this->bookingSummary($booking), $this->customerData()['bookings']);
-
-        return $this->ok($bookings);
+        return $this->ok($this->customerBookingsList());
     }
 
     public function customerBookingShow(Request $request, string $bookingReference): JsonResponse
     {
-        $booking = collect($this->customerData()['bookings'])
-            ->first(fn (array $item) => $item['reference'] === $bookingReference || $item['id'] === $bookingReference);
+        $booking = $this->customerBookingRecord($bookingReference);
 
         if (!$booking) {
+            $fallbackBooking = collect($this->customerData()['bookings'])->firstWhere('reference', $bookingReference)
+                ?? collect($this->customerData()['bookings'])->firstWhere('id', $bookingReference);
+
+            if ($fallbackBooking) {
+                return $this->ok($this->bookingSummary($fallbackBooking));
+            }
+
             return $this->error('Record not found.');
         }
 
-        return $this->ok($this->bookingSummary($booking));
+        return $this->ok($booking->toCustomerSummaryArray());
     }
 
     public function customerProfile(Request $request): JsonResponse
@@ -422,32 +748,70 @@ class TourismBusinessController extends Controller
         return $this->ok($this->customerData()['reviews']);
     }
 
-    public function publicIndex(string $tenantKey, string $resource): JsonResponse
+    private function publicCatalogIndex(Request $request, string $tenantKey, string $resource): JsonResponse
     {
-        $data = $this->publicData();
-        if (!array_key_exists($resource, $data)) {
-            return $this->error('Resource not found.');
-        }
-
-        return $this->ok($data[$resource]);
+        return $this->ok($this->resourceItems($tenantKey, $resource, $this->requestedVariant($request)));
     }
 
-    public function publicShow(string $tenantKey, string $resource, string $slug): JsonResponse
+    private function publicCatalogShow(Request $request, string $tenantKey, string $resource, string $slug): JsonResponse
     {
-        $response = $this->publicIndex($tenantKey, $resource);
-        if ($response->getStatusCode() !== 200) {
-            return $response;
-        }
-
-        $payload = $response->getData(true);
-        $item = collect($payload['data'])->firstWhere('slug', $slug);
+        $items = $this->resourceItems($tenantKey, $resource, $this->requestedVariant($request));
+        $item = collect($items)->firstWhere('slug', $slug);
 
         return $item ? $this->ok($item) : $this->error('Record not found.');
+    }
+
+    public function publicPackages(Request $request, string $tenantKey): JsonResponse
+    {
+        return $this->publicCatalogIndex($request, $tenantKey, 'packages');
+    }
+
+    public function publicPackageShow(Request $request, string $tenantKey, string $slug): JsonResponse
+    {
+        return $this->publicCatalogShow($request, $tenantKey, 'packages', $slug);
+    }
+
+    public function publicServices(Request $request, string $tenantKey): JsonResponse
+    {
+        return $this->publicCatalogIndex($request, $tenantKey, 'services');
+    }
+
+    public function publicServiceShow(Request $request, string $tenantKey, string $slug): JsonResponse
+    {
+        return $this->publicCatalogShow($request, $tenantKey, 'services', $slug);
+    }
+
+    public function publicActivities(Request $request, string $tenantKey): JsonResponse
+    {
+        return $this->publicCatalogIndex($request, $tenantKey, 'activities');
+    }
+
+    public function publicActivityShow(Request $request, string $tenantKey, string $slug): JsonResponse
+    {
+        return $this->publicCatalogShow($request, $tenantKey, 'activities', $slug);
+    }
+
+    public function publicReviews(Request $request, string $tenantKey): JsonResponse
+    {
+        return $this->ok($this->resourceItems($tenantKey, 'reviews', $this->requestedVariant($request)));
     }
 
     public function storeBooking(Request $request, string $tenantKey): JsonResponse
     {
         $reference = 'TBK-' . now()->format('Y') . '-' . str_pad((string) random_int(1, 999999), 6, '0', STR_PAD_LEFT);
+        $customerName = (string) $request->input('customer_name', $request->input('name', 'Customer'));
+        $customerEmail = (string) $request->input('customer_email', $request->input('email', ''));
+        $destination = (string) $request->input('destination', 'Sri Lanka');
+        $destinationSlug = (string) $request->input('destination_slug', '');
+        $packageName = (string) $request->input('package_name', $request->input('packageName', 'Custom Booking'));
+        $packageSlug = (string) $request->input('package_slug', '');
+        $serviceName = (string) $request->input('service_name', '');
+        $serviceSlug = (string) $request->input('service_slug', '');
+        $activityName = (string) $request->input('activity_name', '');
+        $activitySlug = (string) $request->input('activity_slug', '');
+        $travelersCount = (int) $request->input('travelers_count', (int) $request->input('adults', 0) + (int) $request->input('children', 0) + (int) $request->input('infants', 0));
+        $routeSummary = trim((string) $request->input('route_summary', implode(' · ', array_filter([$destination, $packageName, $serviceName, $activityName]))));
+        $tripStory = trim((string) $request->input('trip_story', $request->input('journey_story', '')));
 
         return $this->ok([
             'id' => $reference,
@@ -455,20 +819,34 @@ class TourismBusinessController extends Controller
             'reference' => $reference,
             'status' => 'pending',
             'payment_status' => 'unpaid',
-            'customer_name' => $request->input('customer_name', $request->input('name', 'Customer')),
-            'customer_email' => $request->input('customer_email', $request->input('email')),
-            'package_name' => $request->input('package_name', $request->input('packageName', 'Custom Booking')),
-            'destination' => $request->input('destination', 'Sri Lanka'),
+            'customer_name' => $customerName,
+            'customer_email' => $customerEmail,
+            'package_name' => $packageName,
+            'package_slug' => $packageSlug,
+            'destination' => $destination,
+            'destination_slug' => $destinationSlug,
+            'service_name' => $serviceName,
+            'service_slug' => $serviceSlug,
+            'activity_name' => $activityName,
+            'activity_slug' => $activitySlug,
             'travel_date' => $request->input('travel_date', $request->input('travelDate')),
             'return_date' => $request->input('return_date', $request->input('returnDate')),
             'adults' => (int) $request->input('adults', 0),
             'children' => (int) $request->input('children', 0),
             'infants' => (int) $request->input('infants', 0),
-            'travelers_count' => (int) $request->input('adults', 0) + (int) $request->input('children', 0) + (int) $request->input('infants', 0),
-            'total_amount' => 0,
-            'paid_amount' => 0,
+            'travelers_count' => $travelersCount,
+            'total_amount' => (int) $request->input('total_amount', 0),
+            'paid_amount' => (int) $request->input('paid_amount', 0),
             'currency' => 'LKR',
             'notes' => $request->input('notes', ''),
+            'route_summary' => $routeSummary,
+            'trip_story' => $tripStory,
+            'journey_story' => $tripStory,
+            'trip_highlights' => $request->input('trip_highlights', []),
+            'destination_story' => (string) $request->input('destination_story', ''),
+            'package_story' => (string) $request->input('package_story', ''),
+            'service_story' => (string) $request->input('service_story', ''),
+            'activity_story' => (string) $request->input('activity_story', ''),
         ], 201);
     }
 
@@ -485,21 +863,213 @@ class TourismBusinessController extends Controller
 
     public function adminIndex(Request $request, string $resource): JsonResponse
     {
+        return $this->adminCatalogIndex($request, $resource);
+    }
+
+    private function adminCatalogIndex(Request $request, string $resource): JsonResponse
+    {
         $tenantKey = (string) $request->input('tenantKey');
-        if (!$tenantKey || !$this->tenant($tenantKey)) {
+        $tenant = $tenantKey ? $this->tenant($tenantKey) : null;
+        if (!$tenant) {
             return $this->error('Tenant not found.', 422);
         }
 
         $map = [
+            'services' => 'services',
             'tourism-services' => 'services',
             'transport-options' => 'services',
             'service-categories' => 'services',
             'accommodations' => 'services',
+            'activities' => 'activities',
         ];
         $key = $map[$resource] ?? $resource;
-        $data = $this->publicData();
 
-        return $this->ok($data[$key] ?? []);
+        $items = $this->catalogRows($key, $tenant);
+        if ($items !== []) {
+            $search = trim((string) $request->input('search', ''));
+            if ($search !== '') {
+                $needle = mb_strtolower($search);
+                $items = array_values(array_filter($items, static function (array $item) use ($needle) {
+                    $haystack = mb_strtolower(implode(' ', array_filter([
+                        (string) ($item['title'] ?? ''),
+                        (string) ($item['subtitle'] ?? ''),
+                        (string) ($item['description'] ?? ''),
+                    ])));
+
+                    return str_contains($haystack, $needle);
+                }));
+            }
+
+            return $this->ok($this->catalogPaginatedResponse($items, $request));
+        }
+
+        $data = $this->publicData();
+        $items = $data[$key] ?? [];
+        if (!is_array($items)) {
+            $items = [];
+        }
+
+        $search = trim((string) $request->input('search', ''));
+        if ($search !== '') {
+            $needle = mb_strtolower($search);
+            $items = array_values(array_filter($items, static function (array $item) use ($needle) {
+                $haystack = mb_strtolower(implode(' ', array_filter([
+                    (string) ($item['title'] ?? ''),
+                    (string) ($item['subtitle'] ?? ''),
+                    (string) ($item['description'] ?? ''),
+                ])));
+
+                return str_contains($haystack, $needle);
+            }));
+        }
+
+        return $this->ok($this->catalogPaginatedResponse($items, $request));
+    }
+
+    public function adminPackages(Request $request): JsonResponse
+    {
+        return $this->adminIndex($request, 'packages');
+    }
+
+    public function adminPackageStore(Request $request): JsonResponse
+    {
+        return $this->adminStore($request, 'packages');
+    }
+
+    public function adminPackageUpdate(Request $request, int $id): JsonResponse
+    {
+        return $this->adminUpdate($request, 'packages', $id);
+    }
+
+    public function adminPackageDestroy(Request $request, int $id): JsonResponse
+    {
+        return $this->adminDestroy($request, 'packages', $id);
+    }
+
+    public function adminServices(Request $request): JsonResponse
+    {
+        return $this->adminIndex($request, 'services');
+    }
+
+    public function adminServiceStore(Request $request): JsonResponse
+    {
+        return $this->adminStore($request, 'services');
+    }
+
+    public function adminServiceUpdate(Request $request, int $id): JsonResponse
+    {
+        return $this->adminUpdate($request, 'services', $id);
+    }
+
+    public function adminServiceDestroy(Request $request, int $id): JsonResponse
+    {
+        return $this->adminDestroy($request, 'services', $id);
+    }
+
+    public function adminActivities(Request $request): JsonResponse
+    {
+        return $this->adminIndex($request, 'activities');
+    }
+
+    public function adminActivityStore(Request $request): JsonResponse
+    {
+        return $this->adminStore($request, 'activities');
+    }
+
+    public function adminActivityUpdate(Request $request, int $id): JsonResponse
+    {
+        return $this->adminUpdate($request, 'activities', $id);
+    }
+
+    public function adminActivityDestroy(Request $request, int $id): JsonResponse
+    {
+        return $this->adminDestroy($request, 'activities', $id);
+    }
+
+    public function adminTransportStore(Request $request): JsonResponse
+    {
+        return $this->adminStore($request, 'services');
+    }
+
+    public function adminTransportUpdate(Request $request, int $id): JsonResponse
+    {
+        return $this->adminUpdate($request, 'services', $id);
+    }
+
+    public function adminTransportDestroy(Request $request, int $id): JsonResponse
+    {
+        return $this->adminDestroy($request, 'services', $id);
+    }
+
+    public function adminStore(Request $request, string $resource): JsonResponse
+    {
+        $tenantKey = (string) $request->input('tenantKey');
+        $tenant = $tenantKey ? $this->tenant($tenantKey) : null;
+        if (!$tenant) {
+            return $this->error('Tenant not found.', 422);
+        }
+
+        $resource = $this->normalizePublicResource($resource);
+        if (!$this->catalogModelClass($resource)) {
+            return $this->error('Resource not found.', 404);
+        }
+
+        $validated = $request->validate($this->catalogValidationRules($resource));
+        $modelClass = $this->catalogModelClass($resource);
+        $payload = $this->catalogPayload($validated, $resource, $tenant);
+
+        $record = $modelClass::query()->create($payload);
+
+        return $this->ok($record->toTourismArray(), 201);
+    }
+
+    public function adminUpdate(Request $request, string $resource, int $id): JsonResponse
+    {
+        $tenantKey = (string) $request->input('tenantKey');
+        $tenant = $tenantKey ? $this->tenant($tenantKey) : null;
+        if (!$tenant) {
+            return $this->error('Tenant not found.', 422);
+        }
+
+        $resource = $this->normalizePublicResource($resource);
+        $modelClass = $this->catalogModelClass($resource);
+        if (!$modelClass) {
+            return $this->error('Resource not found.', 404);
+        }
+
+        $record = $this->catalogEntry($resource, $tenant, $id);
+        if (!$record) {
+            return $this->error('Record not found.');
+        }
+
+        $validated = $request->validate($this->catalogValidationRules($resource));
+        $record->update($this->catalogPayload($validated, $resource, $tenant, $id));
+
+        return $this->ok($record->fresh()->toTourismArray());
+    }
+
+    public function adminDestroy(Request $request, string $resource, int $id): JsonResponse
+    {
+        $tenantKey = (string) $request->input('tenantKey');
+        $tenant = $tenantKey ? $this->tenant($tenantKey) : null;
+        if (!$tenant) {
+            return $this->error('Tenant not found.', 422);
+        }
+
+        $resource = $this->normalizePublicResource($resource);
+        $modelClass = $this->catalogModelClass($resource);
+        if (!$modelClass) {
+            return $this->error('Resource not found.', 404);
+        }
+
+        $record = $this->catalogEntry($resource, $tenant, $id);
+        if (!$record) {
+            return $this->error('Record not found.');
+        }
+
+        $record->delete();
+
+        return $this->ok(['deleted' => true]);
     }
 
     public function dashboard(Request $request): JsonResponse
@@ -510,24 +1080,33 @@ class TourismBusinessController extends Controller
         }
 
         $tenant = $this->tenant($tenantKey);
-        $destinationCount = $tenant
-            ? Destination::query()->where('tenant_id', $tenant->id)->count()
-            : 0;
+        $destinationCount = $tenant ? Destination::query()->where('tenant_id', $tenant->id)->count() : 0;
+        $packageCount = $tenant ? count($this->catalogRows('packages', $tenant)) : 0;
+        $serviceCount = $tenant ? count($this->catalogRows('services', $tenant)) : 0;
+        $activityCount = $tenant ? count($this->catalogRows('activities', $tenant)) : 0;
+        $bookingQuery = $tenant ? Booking::query()->where('tenant_id', $tenant->id) : Booking::query()->whereRaw('1 = 0');
+        $totalBookings = (clone $bookingQuery)->count();
+        $pendingBookings = (clone $bookingQuery)->where('booking_status', 'pending')->count();
+        $confirmedBookings = (clone $bookingQuery)->where('booking_status', 'confirmed')->count();
+        $completedBookings = (clone $bookingQuery)->where('booking_status', 'completed')->count();
+        $recentBookings = (clone $bookingQuery)->latest('id')->limit(5)->get()->map(fn (Booking $booking) => $booking->toCustomerSummaryArray())->values()->all();
+        $totalRevenue = (int) (clone $bookingQuery)->sum('paid_amount');
 
         return $this->ok([
             'total_destinations' => $destinationCount,
-            'total_active_packages' => 2,
-            'total_services' => 2,
-            'total_bookings' => 2,
-            'pending_bookings' => 1,
-            'confirmed_bookings' => 1,
-            'completed_bookings' => 0,
+            'total_active_packages' => $packageCount,
+            'total_services' => $serviceCount,
+            'total_activities' => $activityCount,
+            'total_bookings' => $totalBookings,
+            'pending_bookings' => $pendingBookings,
+            'confirmed_bookings' => $confirmedBookings,
+            'completed_bookings' => $completedBookings,
             'total_inquiries' => 1,
             'new_inquiries' => 1,
-            'total_revenue' => 0,
-            'recent_bookings' => $this->publicData()['bookings'],
-            'recent_inquiries' => $this->publicData()['inquiries'],
-            'top_packages' => $this->publicData()['packages'],
+            'total_revenue' => $totalRevenue,
+            'recent_bookings' => $recentBookings ?: $this->publicData()['bookings'],
+            'recent_inquiries' => $this->customerData()['inquiries'],
+            'top_packages' => $this->catalogRows('packages', $tenant),
         ]);
     }
 }

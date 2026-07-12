@@ -20,6 +20,9 @@ class DatabaseSeeder extends Seeder
             UserSeeder::class,
             UserRoleSeeder::class,
             DestinationSeeder::class,
+            PackageSeeder::class,
+            TourismServiceSeeder::class,
+            ActivitySeeder::class,
             // ActionSeeder::class,
             // ResourceSeeder::class,
             // PermissionSeeder::class,
@@ -29,3 +32,4 @@ class DatabaseSeeder extends Seeder
         ]);
     }
 }
+

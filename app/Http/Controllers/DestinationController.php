@@ -84,6 +84,12 @@ class DestinationController extends Controller
         return Destination::query()->where('tenant_id', $tenant->id);
     }
 
+    private function requestedVariant(Request $request): ?string
+    {
+        $variant = trim((string) $request->query('variant', ''));
+        return $variant !== '' ? $variant : null;
+    }
+
     private function seedTenantDestinations(Tenant $tenant): void
     {
         if ($this->destinationQuery($tenant)->exists()) {
@@ -284,7 +290,7 @@ class DestinationController extends Controller
         ]);
     }
 
-    public function publicIndex(string $tenantKey): JsonResponse
+    public function publicIndex(Request $request, string $tenantKey): JsonResponse
     {
         $tenant = $this->resolveTenantFromKey($tenantKey);
 
@@ -294,8 +300,14 @@ class DestinationController extends Controller
 
         $this->seedTenantDestinations($tenant);
 
-        $items = $this->destinationQuery($tenant)
-            ->where('status', 'active')
+        $query = $this->destinationQuery($tenant)
+            ->where('status', 'active');
+
+        if ($this->requestedVariant($request) === 'featured') {
+            $query->where('featured', true);
+        }
+
+        $items = $query
             ->latest('id')
             ->get()
             ->map(fn (Destination $destination) => $this->destinationPayload($destination))
@@ -305,7 +317,7 @@ class DestinationController extends Controller
         return $this->ok($items);
     }
 
-    public function publicShow(string $tenantKey, string $slug): JsonResponse
+    public function publicShow(Request $request, string $tenantKey, string $slug): JsonResponse
     {
         $tenant = $this->resolveTenantFromKey($tenantKey);
 
@@ -315,10 +327,12 @@ class DestinationController extends Controller
 
         $this->seedTenantDestinations($tenant);
 
-        $destination = $this->destinationQuery($tenant)
-            ->where('slug', $slug)
+        $query = $this->destinationQuery($tenant)
             ->where('status', 'active')
-            ->first();
+            ->where('slug', $slug)
+            ->when($this->requestedVariant($request) === 'featured', fn (Builder $builder) => $builder->where('featured', true));
+
+        $destination = $query->first();
 
         return $destination
             ? $this->ok($this->destinationPayload($destination))
