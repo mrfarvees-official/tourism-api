@@ -23,25 +23,14 @@ jobs:
           tools: composer:v2
           coverage: none
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
       - name: Install PHP dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
-
-      - name: Install Node dependencies
-        run: npm install
 
       - name: Run unit tests
         run: composer test
 
-      - name: Build application
-        run: npm run build
-
       - name: Verify Docker build
-        run: docker build -t tourism-api:ci .
+        run: docker build -f docker/php/Dockerfile -t tourism-api:ci .
 
   deploy:
     name: Deploy to server

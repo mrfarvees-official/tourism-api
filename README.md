@@ -62,7 +62,7 @@ The Laravel framework is open-sourced software licensed under the [MIT license](
 
 This repo includes a GitHub Actions workflow at [`.github/workflows/ci-cd.yml`](./.github/workflows/ci-cd.yml).
 
-- Pull requests and pushes run `composer test`, `npm run build`, and a Docker image build check.
+- Pull requests and pushes run `composer test` and a Docker image build check.
 - Pushes to `main` also deploy over SSH by running `docker compose --env-file .env.docker -f docker-compose.ip.yml up -d --build --remove-orphans` on the server.
 
 Server requirements:
