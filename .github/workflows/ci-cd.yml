@@ -68,3 +68,4 @@ jobs:
           docker compose --env-file .env.docker -f docker-compose.ip.yml up -d --build --remove-orphans
           docker compose --env-file .env.docker -f docker-compose.ip.yml exec -T app php artisan migrate --force
           docker image prune -f"
+          
