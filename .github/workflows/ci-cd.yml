@@ -33,7 +33,7 @@ jobs:
         run: composer install --no-interaction --prefer-dist --no-progress
 
       - name: Install Node dependencies
-        run: npm ci
+        run: npm install
 
       - name: Run unit tests
         run: composer test
