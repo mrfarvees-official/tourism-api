@@ -57,3 +57,16 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+## Docker CI/CD
+
+This repo includes a GitHub Actions workflow at [`.github/workflows/ci-cd.yml`](./.github/workflows/ci-cd.yml).
+
+- Pull requests and pushes run `composer test`, `npm run build`, and a Docker image build check.
+- Pushes to `main` also deploy over SSH by running `docker compose --env-file .env.docker -f docker-compose.prod.yml up -d --build --remove-orphans` on the server.
+
+Server requirements:
+
+- The repository must already be cloned on the server at the path stored in the `SERVER_PATH` secret.
+- A `.env.docker` file must exist in that server checkout.
+- GitHub secrets required for deploy are `SSH_PRIVATE_KEY`, `SSH_HOST`, `SSH_USER`, `SSH_PORT` (optional, defaults to `22`), and `SERVER_PATH`.

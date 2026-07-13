@@ -1,0 +1,81 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ci:
+    name: Test and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.4
+          extensions: mbstring, dom, curl, fileinfo, pdo_sqlite, sqlite3, zip
+          tools: composer:v2
+          coverage: none
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: composer test
+
+      - name: Build application
+        run: npm run build
+
+      - name: Verify Docker build
+        run: docker build -t tourism-api:ci .
+
+  deploy:
+    name: Deploy to server
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.SSH_PORT || '22' }}" -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy over SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SERVER_PATH: ${{ secrets.SERVER_PATH }}
+          BRANCH_NAME: main
+        run: |
+          ssh -p "${SSH_PORT:-22}" "${SSH_USER}@${SSH_HOST}" "set -e
+          cd '${SERVER_PATH}'
+          test -f .env.docker
+          git fetch origin ${BRANCH_NAME}
+          git reset --hard origin/${BRANCH_NAME}
+          docker compose --env-file .env.docker -f docker-compose.prod.yml down --remove-orphans || true
+          docker compose --env-file .env.docker -f docker-compose.prod.yml up -d --build --remove-orphans
+          docker image prune -f"
