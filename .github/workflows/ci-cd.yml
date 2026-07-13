@@ -66,6 +66,13 @@ jobs:
           git reset --hard origin/${BRANCH_NAME}
           docker compose --env-file .env.docker -f docker-compose.ip.yml down --remove-orphans || true
           docker compose --env-file .env.docker -f docker-compose.ip.yml up -d --build --remove-orphans
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if docker compose --env-file .env.docker -f docker-compose.ip.yml exec -T mysql sh -lc 'mysqladmin ping -p"$MYSQL_ROOT_PASSWORD" --silent'; then
+              break
+            fi
+            sleep 5
+          done
+          docker compose --env-file .env.docker -f docker-compose.ip.yml exec -T mysql sh -lc 'mysqladmin ping -p"$MYSQL_ROOT_PASSWORD" --silent'
           docker compose --env-file .env.docker -f docker-compose.ip.yml exec -T app php artisan migrate --force
           docker image prune -f"
           
