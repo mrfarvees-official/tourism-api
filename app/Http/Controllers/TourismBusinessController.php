@@ -5,11 +5,16 @@ namespace App\Http\Controllers;
 use App\Models\ContentData;
 use App\Models\ContentSchema;
 use App\Models\Booking;
-use App\Models\TourismActivity;
+use App\Models\Customer;
 use App\Models\Destination;
+use App\Models\Stay;
+use App\Models\TenantAssets;
+use App\Models\Tenant;
+use App\Models\TourismActivity;
 use App\Models\TourismPackage;
 use App\Models\TourismService;
-use App\Models\Tenant;
+use App\Models\TransportOption;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -1080,33 +1085,237 @@ class TourismBusinessController extends Controller
         }
 
         $tenant = $this->tenant($tenantKey);
-        $destinationCount = $tenant ? Destination::query()->where('tenant_id', $tenant->id)->count() : 0;
-        $packageCount = $tenant ? count($this->catalogRows('packages', $tenant)) : 0;
-        $serviceCount = $tenant ? count($this->catalogRows('services', $tenant)) : 0;
-        $activityCount = $tenant ? count($this->catalogRows('activities', $tenant)) : 0;
-        $bookingQuery = $tenant ? Booking::query()->where('tenant_id', $tenant->id) : Booking::query()->whereRaw('1 = 0');
-        $totalBookings = (clone $bookingQuery)->count();
-        $pendingBookings = (clone $bookingQuery)->where('booking_status', 'pending')->count();
-        $confirmedBookings = (clone $bookingQuery)->where('booking_status', 'confirmed')->count();
-        $completedBookings = (clone $bookingQuery)->where('booking_status', 'completed')->count();
-        $recentBookings = (clone $bookingQuery)->latest('id')->limit(5)->get()->map(fn (Booking $booking) => $booking->toCustomerSummaryArray())->values()->all();
-        $totalRevenue = (int) (clone $bookingQuery)->sum('paid_amount');
+        $period = strtolower((string) $request->input('period', 'yearly'));
+        if (!in_array($period, ['yearly', 'monthly'], true)) {
+            $period = 'yearly';
+        }
+
+        $year = (int) ($request->input('year') ?: now()->year);
+        $month = $period === 'monthly'
+            ? max(1, min(12, (int) ($request->input('month') ?: now()->month)))
+            : null;
+        $endDate = $this->analyticsEndDate($period, $year, $month);
+
+        $labels = $this->analyticsLabels($period, $endDate);
+        $resources = $this->analyticsResources($tenant, $period, $endDate, $labels);
+
+        $summary = [];
+        foreach ($resources as $resource) {
+            $summary[$resource['key'] . '_total'] = $resource['total'];
+            $summary[$resource['key'] . '_active'] = $resource['active'];
+            $summary[$resource['key'] . '_draft'] = $resource['draft'];
+        }
+
+        $calculationNotes = [
+            [
+                'key' => 'total_count',
+                'label' => 'Total resources',
+                'formula' => 'COUNT(all records where tenant_id = current tenant)',
+                'description' => 'Counts the full inventory for each resource model in the tenant scope.',
+            ],
+            [
+                'key' => 'active_count',
+                'label' => 'Active resources',
+                'formula' => 'COUNT(records where status IN ("active", "published", "enabled"))',
+                'description' => 'Measures the published or live subset for content-bearing resources.',
+            ],
+            [
+                'key' => 'draft_count',
+                'label' => 'Draft resources',
+                'formula' => 'COUNT(records where status = "draft")',
+                'description' => 'Measures unfinished or unpublished inventory.',
+            ],
+            [
+                'key' => 'period_series',
+                'label' => 'Period series',
+                'formula' => 'COUNT(records grouped by created_at month/day within the selected rolling period)',
+                'description' => 'Builds line-chart points from database timestamps for the trailing 12 months or selected month.',
+            ],
+            [
+                'key' => 'resource_share',
+                'label' => 'Resource share',
+                'formula' => 'resource total / SUM(all resource totals) × 100',
+                'description' => 'Shows how each resource contributes to the tenant inventory mix.',
+            ],
+            [
+                'key' => 'period_growth',
+                'label' => 'Period growth',
+                'formula' => '(last bucket - first bucket) / MAX(first bucket, 1) × 100',
+                'description' => 'Compares the beginning and end of the selected period to estimate direction of change.',
+            ],
+        ];
+
+        $resourceTotals = collect($resources)->sum('total') ?: 1;
+        $resourceCalculations = collect($resources)->map(function (array $resource) use ($resourceTotals) {
+            $series = collect($resource['series'] ?? []);
+            $firstValue = (int) ($series->first()['value'] ?? 0);
+            $lastValue = (int) ($series->last()['value'] ?? 0);
+            $growthBase = max($firstValue, 1);
+
+            return [
+                'key' => $resource['key'],
+                'label' => $resource['label'],
+                'total' => $resource['total'],
+                'share_percent' => round(($resource['total'] / $resourceTotals) * 100, 2),
+                'growth_percent' => round((($lastValue - $firstValue) / $growthBase) * 100, 2),
+                'first_bucket' => $firstValue,
+                'last_bucket' => $lastValue,
+                'formula_share' => 'resource total / SUM(all resource totals) × 100',
+                'formula_growth' => '(last bucket - first bucket) / MAX(first bucket, 1) × 100',
+            ];
+        })->values()->all();
 
         return $this->ok([
-            'total_destinations' => $destinationCount,
-            'total_active_packages' => $packageCount,
-            'total_services' => $serviceCount,
-            'total_activities' => $activityCount,
-            'total_bookings' => $totalBookings,
-            'pending_bookings' => $pendingBookings,
-            'confirmed_bookings' => $confirmedBookings,
-            'completed_bookings' => $completedBookings,
-            'total_inquiries' => 1,
-            'new_inquiries' => 1,
-            'total_revenue' => $totalRevenue,
-            'recent_bookings' => $recentBookings ?: $this->publicData()['bookings'],
-            'recent_inquiries' => $this->customerData()['inquiries'],
-            'top_packages' => $this->catalogRows('packages', $tenant),
+            'tenant' => [
+                'id' => $tenant->id,
+                'key' => $tenant->key,
+                'name' => $tenant->name,
+                'status' => $tenant->status,
+                'timezone' => $tenant->timezone,
+                'locale' => $tenant->locale,
+            ],
+            'filters' => [
+                'period' => $period,
+                'year' => $year,
+                'month' => $month,
+                'label' => $this->analyticsPeriodLabel($period, $endDate),
+                'labels' => $labels,
+            ],
+            'summary' => $summary,
+            'resources' => $resources,
         ]);
     }
+
+    private function analyticsResources(Tenant $tenant, string $period, Carbon $endDate, array $labels): array
+    {
+        $definitions = [
+            ['key' => 'packages', 'label' => 'Packages', 'query' => TourismPackage::query()->where('tenant_id', $tenant->id), 'has_status' => true],
+            ['key' => 'destinations', 'label' => 'Destinations', 'query' => Destination::query()->where('tenant_id', $tenant->id), 'has_status' => true],
+            ['key' => 'services', 'label' => 'Services', 'query' => TourismService::query()->where('tenant_id', $tenant->id), 'has_status' => true],
+            ['key' => 'activities', 'label' => 'Activities', 'query' => TourismActivity::query()->where('tenant_id', $tenant->id), 'has_status' => true],
+            ['key' => 'stays', 'label' => 'Stays', 'query' => Stay::query()->where('tenant_id', $tenant->id), 'has_status' => true],
+            ['key' => 'transport', 'label' => 'Transport', 'query' => TransportOption::query()->where('tenant_id', $tenant->id), 'has_status' => true],
+            ['key' => 'customers', 'label' => 'Customers', 'query' => Customer::query()->where('tenant_id', $tenant->id), 'has_status' => false],
+            ['key' => 'media', 'label' => 'Media assets', 'query' => TenantAssets::query()->where('tenant_id', $tenant->id), 'has_status' => false],
+        ];
+
+        return collect($definitions)->map(function (array $definition) use ($period, $endDate, $labels) {
+            $query = $definition['query'];
+            $total = (clone $query)->count();
+            $active = $definition['has_status']
+                ? (clone $query)->whereIn('status', ['active', 'published', 'enabled'])->count()
+                : $total;
+            $draft = $definition['has_status']
+                ? (clone $query)->where('status', 'draft')->count()
+                : 0;
+
+            return [
+                'key' => $definition['key'],
+                'label' => $definition['label'],
+                'total' => $total,
+                'active' => $active,
+                'draft' => $draft,
+                'series' => $this->analyticsSeries($query, $period, $endDate, $labels),
+            ];
+        })->values()->all();
+    }
+
+    private function analyticsSeries($query, string $period, Carbon $endDate, array $labels): array
+    {
+        if ($period === 'monthly') {
+            $daysInMonth = $endDate->daysInMonth;
+            $counts = array_fill(1, $daysInMonth, 0);
+
+            $query->whereYear('created_at', $endDate->year)
+                ->whereMonth('created_at', $endDate->month)
+                ->get(['created_at'])
+                ->each(function ($item) use (&$counts) {
+                    $day = (int) Carbon::parse((string) $item->created_at)->day;
+                    $counts[$day] = ($counts[$day] ?? 0) + 1;
+                });
+
+            $series = [];
+            for ($day = 1; $day <= $daysInMonth; $day++) {
+                $series[] = [
+                    'label' => (string) $day,
+                    'value' => $counts[$day] ?? 0,
+                ];
+            }
+
+            return $series;
+        }
+
+        $startDate = $endDate->copy()->subMonthsNoOverflow(11)->startOfMonth();
+        $months = [];
+        $cursor = $startDate->copy();
+        for ($i = 0; $i < 12; $i++) {
+            $months[$cursor->format('Y-m')] = 0;
+            $cursor->addMonthNoOverflow();
+        }
+
+        $query->whereBetween('created_at', [$startDate->copy()->startOfDay(), $endDate->copy()->endOfDay()])
+            ->get(['created_at'])
+            ->each(function ($item) use (&$months) {
+                $bucket = Carbon::parse((string) $item->created_at)->format('Y-m');
+                if (array_key_exists($bucket, $months)) {
+                    $months[$bucket] = ($months[$bucket] ?? 0) + 1;
+                }
+            });
+
+        $series = [];
+        foreach ($labels as $bucket => $label) {
+            $series[] = [
+                'label' => $label,
+                'value' => $months[$bucket] ?? 0,
+            ];
+        }
+
+        return $series;
+    }
+
+    private function analyticsLabels(string $period, Carbon $endDate): array
+    {
+        if ($period === 'monthly') {
+            $daysInMonth = $endDate->daysInMonth;
+            return array_map(static fn (int $day): string => (string) $day, range(1, $daysInMonth));
+        }
+
+        $labels = [];
+        $cursor = $endDate->copy()->subMonthsNoOverflow(11)->startOfMonth();
+        for ($i = 0; $i < 12; $i++) {
+            $labels[$cursor->format('Y-m')] = $cursor->format('M y');
+            $cursor->addMonthNoOverflow();
+        }
+
+        return $labels;
+    }
+
+    private function analyticsPeriodLabel(string $period, Carbon $endDate): string
+    {
+        if ($period === 'monthly') {
+            return $endDate->format('F Y');
+        }
+
+        return sprintf(
+            '%s - %s',
+            $endDate->copy()->subMonthsNoOverflow(11)->format('M Y'),
+            $endDate->format('M Y')
+        );
+    }
+
+    private function analyticsEndDate(string $period, int $year, ?int $month): Carbon
+    {
+        if ($period === 'monthly') {
+            return Carbon::create($year, $month ?? now()->month, 1)->endOfMonth();
+        }
+
+        $selectedMonth = $year === now()->year ? now()->month : 12;
+
+        return Carbon::create($year, $selectedMonth, 1)->endOfMonth();
+    }
+
 }
+
+
+
+
