@@ -11,6 +11,11 @@ class Tenant extends Model
     use SoftDeletes;
 
     protected $table = 'tenants';
+    protected $casts = [
+        'meta' => 'array',
+        'trial_ends_at' => 'datetime',
+        'suspended_at' => 'datetime',
+    ];
     protected $fillable = [
         'key',
         'name',

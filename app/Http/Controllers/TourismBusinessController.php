@@ -1098,6 +1098,8 @@ class TourismBusinessController extends Controller
 
         $labels = $this->analyticsLabels($period, $endDate);
         $resources = $this->analyticsResources($tenant, $period, $endDate, $labels);
+        $packages = $this->catalogRows('packages', $tenant);
+        $recentInquiries = array_slice($this->customerData()['inquiries'] ?? [], 0, 5);
 
         $summary = [];
         foreach ($resources as $resource) {
@@ -1181,6 +1183,8 @@ class TourismBusinessController extends Controller
                 'label' => $this->analyticsPeriodLabel($period, $endDate),
                 'labels' => $labels,
             ],
+            'total_active_packages' => count($packages),
+            'recent_inquiries' => $recentInquiries,
             'summary' => $summary,
             'resources' => $resources,
         ]);
