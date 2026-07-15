@@ -13,6 +13,7 @@ use App\Http\Controllers\TenantInboxController;
 use App\Http\Controllers\TenantContactInquiryController;
 use App\Http\Controllers\TenantContactSettingsController;
 use App\Http\Controllers\TenantCustomerIntakeMailController;
+use App\Http\Controllers\TenantActivityLogController;
 use App\Http\Controllers\TenantDashboardController;
 use App\Http\Controllers\TenantMediaController;
 use App\Http\Controllers\TenantPageController;
@@ -38,6 +39,7 @@ Route::middleware('auth:sanctum', 'tracked')->patch('/company/bootstrap/contact-
 // Organization profile 
 Route::middleware('auth:sanctum', 'tracked')->get('/organization', [OrganizationProfileController::class, 'index']);
 Route::middleware('auth:sanctum', 'tracked')->get('/tenant/dashboard', [TenantDashboardController::class, 'index']);
+Route::middleware('auth:sanctum', 'tracked')->get('/admin/activity-logs', [TenantActivityLogController::class, 'index']);
 Route::middleware('auth:sanctum', 'tracked')->get('/admin/inbox', [TenantInboxController::class, 'index']);
 Route::middleware('auth:sanctum', 'tracked')->get('/admin/inbox/{inboxMessage}', [TenantInboxController::class, 'show'])->whereNumber('inboxMessage');
 Route::middleware('auth:sanctum', 'tracked')->patch('/admin/inbox/{inboxMessage}', [TenantInboxController::class, 'update'])->whereNumber('inboxMessage');
