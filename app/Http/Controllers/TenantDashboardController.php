@@ -26,13 +26,11 @@ class TenantDashboardController extends Controller
         $pages = TenantPages::query()
             ->where('tenant_id', $tenant->id)
             ->orderByDesc('updated_at')
-            ->limit(8)
             ->get();
 
         $media = TenantAssets::query()
             ->where('tenant_id', $tenant->id)
             ->orderByDesc('updated_at')
-            ->limit(8)
             ->get();
 
         $schemas = ContentSchema::query()
@@ -40,17 +38,10 @@ class TenantDashboardController extends Controller
             ->orderByDesc('updated_at')
             ->get();
 
-        $contentData = ContentData::query()
-            ->whereHas('contentSchema', fn ($query) => $query->where('tenant_id', $tenant->id))
-            ->with(['contentSchema'])
-            ->orderByDesc('updated_at')
-            ->limit(24)
-            ->get();
 
         $inboxMessages = TenantInboxMessage::query()
             ->where('tenant_id', $tenant->id)
             ->orderByDesc('updated_at')
-            ->limit(24)
             ->get();
 
         $members = TenantUser::query()
@@ -62,7 +53,6 @@ class TenantDashboardController extends Controller
         $invites = TenantInvites::query()
             ->where('tenant_id', $tenant->id)
             ->orderByDesc('created_at')
-            ->limit(8)
             ->get();
 
         $summary = [
@@ -73,11 +63,10 @@ class TenantDashboardController extends Controller
             'media_bytes' => (int) $media->sum(fn (TenantAssets $asset) => (int) ($asset->size ?? 0)),
             'schemas_total' => $schemas->count(),
             'schemas_enabled' => $schemas->where('status', 'enabled')->count(),
-            'records_total' => $contentData->count(),
             'members_total' => $members->count(),
             'owners_total' => $members->where('role', 'tenant_owner')->count(),
             'invites_total' => $invites->count(),
-            'updated_at' => $this->latestTimestamp(collect([$pages, $media, $schemas, $contentData, $members, $invites, $inboxMessages])),
+            'updated_at' => $this->latestTimestamp(collect([$pages, $media, $schemas, $members, $invites, $inboxMessages])),
         ];
 
         $recentPages = $pages->map(fn (TenantPages $page) => [
@@ -120,32 +109,6 @@ class TenantDashboardController extends Controller
             'joined_at' => $member->joined_at,
         ])->values();
 
-        $recentRecords = $contentData->map(function (ContentData $record) {
-            $menu = $record->contentSchema?->menu ?? 'content';
-            $data = is_array($record->data) ? $record->data : [];
-
-            return [
-                'id' => $record->id,
-                'menu' => $menu,
-                'title' => Arr::get($data, 'title')
-                    ?? Arr::get($data, 'name')
-                    ?? Arr::get($data, 'label')
-                    ?? Arr::get($data, 'headline')
-                    ?? "Record #{$record->id}",
-                'page_slug' => Arr::get($data, 'page_slug'),
-                'name' => Arr::get($data, 'name'),
-                'email' => Arr::get($data, 'email'),
-                'phone' => Arr::get($data, 'phone'),
-                'subject' => Arr::get($data, 'subject'),
-                'message' => Arr::get($data, 'message'),
-                'source' => Arr::get($data, 'source'),
-                'status' => Arr::get($data, 'status'),
-                'updated_at' => $record->updated_at,
-                'created_at' => $record->created_at,
-                'preview' => $this->buildPreview($data),
-            ];
-        })->values();
-
         $recentInbox = $inboxMessages->map(fn (TenantInboxMessage $message) => [
             'id' => $message->id,
             'menu' => 'inbox',
@@ -166,21 +129,6 @@ class TenantDashboardController extends Controller
             'preview' => $this->buildPreview(['message' => $message->message, 'subject' => $message->subject, 'name' => $message->name]),
         ])->values();
 
-        $legacyInbox = $this->filterRecords($recentRecords, ['inbox', 'lead', 'message', 'enquiry', 'inquiry', 'contact', 'quote', 'booking']);
-        $mergedInbox = collect($recentInbox->all())
-            ->merge($legacyInbox)
-            ->unique(function (array $record) {
-                return implode('|', [
-                    strtolower((string) ($record['email'] ?? '')),
-                    strtolower((string) ($record['subject'] ?? $record['title'] ?? '')),
-                    strtolower((string) ($record['message'] ?? '')),
-                    strtolower((string) ($record['page_slug'] ?? $record['pageSlug'] ?? '')),
-                    strtolower((string) ($record['status'] ?? '')),
-                ]);
-            })
-            ->values()
-            ->all();
-
         return response()->json([
             'ok' => true,
             'status' => 200,
@@ -199,14 +147,11 @@ class TenantDashboardController extends Controller
                 'schemas' => $recentSchemas,
                 'members' => $recentMembers,
                 'invites' => $invites->values(),
-                'records' => $recentRecords,
                 'inbox' => $recentInbox,
                 'categories' => [
-                    'inbox' => $mergedInbox,
-                    'tours' => $this->filterRecords($recentRecords, ['tour', 'package', 'destination', 'collection', 'trip', 'experience']),
                     'customers' => $recentMembers,
                 ],
-                'activity' => $this->buildActivity($recentPages, $recentMedia, $recentRecords, $recentMembers, $recentInbox),
+                'activity' => $this->buildActivity($recentPages, $recentMedia, $recentMembers, $recentInbox),
             ],
         ]);
     }
@@ -301,7 +246,7 @@ class TenantDashboardController extends Controller
             ->all();
     }
 
-    private function buildActivity(Collection $pages, Collection $media, Collection $records, Collection $members, Collection $inboxMessages): array
+    private function buildActivity(Collection $pages, Collection $media, Collection $members, Collection $inboxMessages): array
     {
         $items = [];
 
@@ -320,15 +265,6 @@ class TenantDashboardController extends Controller
                 'label' => $asset['label'] ?? $asset->label ?? "Asset #{$asset->id}",
                 'meta' => $asset['mime'] ?? $asset->kind ?? 'media',
                 'timestamp' => $asset['updated_at'] ?? $asset->updated_at,
-            ];
-        }
-
-        foreach ($records as $record) {
-            $items[] = [
-                'type' => 'record',
-                'label' => $record['title'],
-                'meta' => $record['menu'],
-                'timestamp' => $record['updated_at'],
             ];
         }
 

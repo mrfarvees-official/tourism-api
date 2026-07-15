@@ -1077,7 +1077,7 @@ class TourismBusinessController extends Controller
         return $this->ok(['deleted' => true]);
     }
 
-    public function dashboard(Request $request): JsonResponse
+    public function  dashboard(Request $request): JsonResponse
     {
         $tenantKey = (string) $request->input('tenantKey');
         if (!$tenantKey) {
