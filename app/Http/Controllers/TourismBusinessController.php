@@ -61,6 +61,16 @@ class TourismBusinessController extends Controller
         $tenantKey = trim((string) $request->input('tenantKey', $request->query('tenantKey', $this->defaultTenantKey())));
         $tenant = $this->tenant($tenantKey);
 
+        if (!$tenant && $tenantKey === $this->defaultTenantKey()) {
+            $tenant = Tenant::query()->create([
+                'key' => $this->defaultTenantKey(),
+                'name' => 'Lanka Trails',
+                'status' => 'active',
+                'timezone' => 'Asia/Colombo',
+                'locale' => 'en',
+            ]);
+        }
+
         if (!$tenant) {
             abort(422, 'Tenant not found.');
         }
@@ -88,7 +98,60 @@ class TourismBusinessController extends Controller
             'address' => '45 Marine Drive, Colombo 03',
         ]);
 
+        $this->seedCustomerBookings($tenant, $customer);
+        $this->seedCustomerReviews($tenant, $customer);
+
         return $customer;
+    }
+
+    private function seedCustomerBookings(Tenant $tenant, Customer $customer): void
+    {
+        foreach (Booking::defaultSeedRows() as $row) {
+            Booking::query()->updateOrCreate(
+                [
+                    'tenant_id' => $tenant->id,
+                    'reference' => $row['reference'],
+                ],
+                array_merge($row, [
+                    'tenant_id' => $tenant->id,
+                    'customer_id' => $customer->id,
+                ]),
+            );
+        }
+    }
+
+    private function seedCustomerReviews(Tenant $tenant, Customer $customer): void
+    {
+        $reviewSeeds = $this->publicData()['reviews'] ?? [];
+        $bookings = Booking::query()
+            ->where('tenant_id', $tenant->id)
+            ->orderBy('id')
+            ->get()
+            ->values();
+
+        foreach ($reviewSeeds as $index => $reviewSeed) {
+            $booking = $bookings[$index] ?? null;
+            if (!$booking) {
+                continue;
+            }
+
+            CustomerReview::query()->updateOrCreate(
+                [
+                    'tenant_id' => $tenant->id,
+                    'booking_reference' => $booking->reference,
+                ],
+                [
+                    'tenant_id' => $tenant->id,
+                    'customer_id' => $customer->id,
+                    'booking_id' => $booking->id,
+                    'booking_reference' => $booking->reference,
+                    'title' => (string) ($reviewSeed['title'] ?? 'Review'),
+                    'message' => (string) ($reviewSeed['message'] ?? ''),
+                    'rating' => (int) ($reviewSeed['rating'] ?? 5),
+                    'status' => (string) ($reviewSeed['status'] ?? 'published'),
+                ],
+            );
+        }
     }
 
     private function customerRecord(Tenant $tenant): Customer
@@ -152,22 +215,34 @@ class TourismBusinessController extends Controller
 
     private function customerBookingsList(Customer $customer): array
     {
-        return $this->customerBookingsQuery($customer)
+        $bookings = $this->customerBookingsQuery($customer)
             ->latest('id')
             ->get()
             ->map(fn (Booking $booking) => $booking->toCustomerSummaryArray())
             ->values()
             ->all();
+
+        if ($bookings !== []) {
+            return $bookings;
+        }
+
+        return $this->publicData()['bookings'] ?? [];
     }
 
     private function customerReviewsList(Customer $customer): array
     {
-        return $this->customerReviewsQuery($customer)
+        $reviews = $this->customerReviewsQuery($customer)
             ->latest('id')
             ->get()
             ->map(fn (CustomerReview $review) => $review->toCustomerArray())
             ->values()
             ->all();
+
+        if ($reviews !== []) {
+            return $reviews;
+        }
+
+        return $this->publicData()['reviews'] ?? [];
     }
 
     private function normalizePublicResource(string $resource): string
@@ -624,6 +699,24 @@ class TourismBusinessController extends Controller
                     'createdAt' => '2026-07-06T09:45:00.000Z',
                 ],
             ],
+            'inquiries' => [
+                [
+                    'id' => 'inq_001',
+                    'name' => 'Ayesha Khan',
+                    'email' => 'ayesha.khan@example.com',
+                    'message' => 'Need help planning a cultural triangle trip.',
+                    'status' => 'new',
+                    'createdAt' => '2026-07-09T08:15:00.000Z',
+                ],
+                [
+                    'id' => 'inq_002',
+                    'name' => 'Maya Silva',
+                    'email' => 'maya.silva@example.com',
+                    'message' => 'Looking for a coastal family package in August.',
+                    'status' => 'new',
+                    'createdAt' => '2026-07-10T10:40:00.000Z',
+                ],
+            ],
         ];
     }
 
@@ -635,6 +728,104 @@ class TourismBusinessController extends Controller
                     ->orWhere('id', $bookingReference);
             })
             ->first();
+    }
+
+    private function bookingSummary(array|Booking $booking): array
+    {
+        if ($booking instanceof Booking) {
+            return $booking->toCustomerSummaryArray();
+        }
+
+        $travelDate = (string) ($booking['travelDate'] ?? $booking['travel_date'] ?? '');
+        $returnDate = (string) ($booking['returnDate'] ?? $booking['return_date'] ?? '');
+        $itinerary = $booking['itinerary'] ?? [];
+        if (!is_array($itinerary)) {
+            $itinerary = [];
+        }
+
+        return [
+            'id' => $booking['id'] ?? $booking['reference'] ?? '',
+            'slug' => $booking['reference'] ?? '',
+            'title' => $booking['customer_name'] ?? '',
+            'subtitle' => $booking['packageName'] ?? $booking['package_name'] ?? ($booking['destination'] ?? 'Booking'),
+            'description' => $booking['notes'] ?? null,
+            'status' => $booking['bookingStatus'] ?? $booking['booking_status'] ?? 'pending',
+            'amount' => isset($booking['totalAmount']) || isset($booking['total_amount'])
+                ? 'LKR ' . number_format((int) ($booking['totalAmount'] ?? $booking['total_amount']))
+                : null,
+            'href' => '/customer/bookings/' . (string) ($booking['reference'] ?? ''),
+            'fields' => [
+                'reference' => $booking['reference'] ?? '',
+                'customer_name' => $booking['customer_name'] ?? null,
+                'customer_email' => $booking['customer_email'] ?? null,
+                'package_name' => $booking['packageName'] ?? $booking['package_name'] ?? null,
+                'destination' => $booking['destination'] ?? null,
+                'travel_date' => $travelDate !== '' ? $travelDate : null,
+                'return_date' => $returnDate !== '' ? $returnDate : null,
+                'adults' => $booking['adults'] ?? null,
+                'children' => $booking['children'] ?? null,
+                'infants' => $booking['infants'] ?? null,
+                'travelers_count' => $booking['travelersCount'] ?? $booking['travelers_count'] ?? null,
+                'total_amount' => $booking['totalAmount'] ?? $booking['total_amount'] ?? null,
+                'paid_amount' => $booking['paidAmount'] ?? $booking['paid_amount'] ?? null,
+                'currency' => $booking['currency'] ?? 'LKR',
+                'booking_status' => $booking['bookingStatus'] ?? $booking['booking_status'] ?? 'pending',
+                'payment_status' => $booking['paymentStatus'] ?? $booking['payment_status'] ?? 'unpaid',
+                'payment_due_date' => $booking['paymentDueDate'] ?? $booking['payment_due_date'] ?? null,
+                'route_summary' => $booking['routeSummary'] ?? $booking['route_summary'] ?? null,
+                'trip_story' => $booking['tripStory'] ?? $booking['trip_story'] ?? null,
+                'trip_highlights' => $booking['addOns'] ?? $booking['add_ons'] ?? $booking['trip_highlights'] ?? [],
+                'notes' => $booking['notes'] ?? null,
+            ],
+            'reference' => $booking['reference'] ?? '',
+            'customer_id' => $booking['customer_id'] ?? null,
+            'booking_reference' => $booking['reference'] ?? '',
+            'customer_name' => $booking['customer_name'] ?? null,
+            'customer_email' => $booking['customer_email'] ?? null,
+            'packageName' => $booking['packageName'] ?? $booking['package_name'] ?? null,
+            'package_name' => $booking['packageName'] ?? $booking['package_name'] ?? null,
+            'destination' => $booking['destination'] ?? null,
+            'destination_slug' => $booking['destination_slug'] ?? null,
+            'package_slug' => $booking['package_slug'] ?? null,
+            'service_name' => $booking['service_name'] ?? null,
+            'service_slug' => $booking['service_slug'] ?? null,
+            'activity_name' => $booking['activity_name'] ?? null,
+            'activity_slug' => $booking['activity_slug'] ?? null,
+            'travelDate' => $travelDate !== '' ? $travelDate : null,
+            'travel_date' => $travelDate !== '' ? $travelDate : null,
+            'returnDate' => $returnDate !== '' ? $returnDate : null,
+            'return_date' => $returnDate !== '' ? $returnDate : null,
+            'travelersCount' => $booking['travelersCount'] ?? $booking['travelers_count'] ?? null,
+            'travelers_count' => $booking['travelersCount'] ?? $booking['travelers_count'] ?? null,
+            'totalAmount' => $booking['totalAmount'] ?? $booking['total_amount'] ?? null,
+            'total_amount' => $booking['totalAmount'] ?? $booking['total_amount'] ?? null,
+            'paidAmount' => $booking['paidAmount'] ?? $booking['paid_amount'] ?? null,
+            'paid_amount' => $booking['paidAmount'] ?? $booking['paid_amount'] ?? null,
+            'currency' => $booking['currency'] ?? 'LKR',
+            'bookingStatus' => $booking['bookingStatus'] ?? $booking['booking_status'] ?? 'pending',
+            'status' => $booking['bookingStatus'] ?? $booking['booking_status'] ?? 'pending',
+            'paymentStatus' => $booking['paymentStatus'] ?? $booking['payment_status'] ?? 'unpaid',
+            'payment_status' => $booking['paymentStatus'] ?? $booking['payment_status'] ?? 'unpaid',
+            'paymentDueDate' => $booking['paymentDueDate'] ?? $booking['payment_due_date'] ?? null,
+            'payment_due_date' => $booking['paymentDueDate'] ?? $booking['payment_due_date'] ?? null,
+            'routeSummary' => $booking['routeSummary'] ?? $booking['route_summary'] ?? null,
+            'route_summary' => $booking['routeSummary'] ?? $booking['route_summary'] ?? null,
+            'tripStory' => $booking['tripStory'] ?? $booking['trip_story'] ?? null,
+            'trip_story' => $booking['tripStory'] ?? $booking['trip_story'] ?? null,
+            'trip_highlights' => $booking['addOns'] ?? $booking['add_ons'] ?? $booking['trip_highlights'] ?? [],
+            'addOns' => $booking['addOns'] ?? $booking['add_ons'] ?? $booking['trip_highlights'] ?? [],
+            'add_ons' => $booking['addOns'] ?? $booking['add_ons'] ?? $booking['trip_highlights'] ?? [],
+            'supportContact' => $booking['supportContact'] ?? $booking['support_contact'] ?? 'support@lankatrails.example',
+            'support_contact' => $booking['supportContact'] ?? $booking['support_contact'] ?? 'support@lankatrails.example',
+            'itinerary' => $itinerary,
+            'notes' => $booking['notes'] ?? null,
+            'destination_story' => $booking['destination_story'] ?? null,
+            'package_story' => $booking['package_story'] ?? null,
+            'service_story' => $booking['service_story'] ?? null,
+            'activity_story' => $booking['activity_story'] ?? null,
+            'created_at' => $booking['created_at'] ?? null,
+            'updated_at' => $booking['updated_at'] ?? null,
+        ];
     }
 
     private function customerDashboardData(Customer $customer, Tenant $tenant): array
@@ -765,6 +956,17 @@ class TourismBusinessController extends Controller
         $customer = $this->customerRecord($tenant);
         $booking = $this->customerBookingRecord($customer, $bookingReference);
 
+        if (!$booking) {
+            $fallbackBooking = collect($this->publicData()['bookings'] ?? [])
+                ->firstWhere('reference', $bookingReference)
+                ?? collect($this->publicData()['bookings'] ?? [])
+                    ->firstWhere('id', $bookingReference);
+
+            if ($fallbackBooking) {
+                return $this->ok($this->bookingSummary($fallbackBooking));
+            }
+        }
+
         return $booking
             ? $this->ok($booking->toCustomerSummaryArray())
             : $this->error('Record not found.');
@@ -777,7 +979,6 @@ class TourismBusinessController extends Controller
 
         if (strtoupper($request->method()) === 'PATCH') {
             $validated = $request->validate([
-                'tenantKey' => ['required', 'string'],
                 'name' => ['nullable', 'string', 'max:255'],
                 'email' => ['nullable', 'email', 'max:255'],
                 'phone' => ['nullable', 'string', 'max:100'],
@@ -811,7 +1012,6 @@ class TourismBusinessController extends Controller
 
         if (strtoupper($request->method()) === 'POST') {
             $validated = $request->validate([
-                'tenantKey' => ['required', 'string'],
                 'bookingId' => ['required', 'string'],
                 'title' => ['required', 'string', 'max:255'],
                 'message' => ['required', 'string'],
@@ -848,7 +1048,6 @@ class TourismBusinessController extends Controller
         }
 
         $validated = $request->validate([
-            'tenantKey' => ['required', 'string'],
             'payment_method' => ['nullable', 'string', 'max:50'],
             'payment_brand' => ['nullable', 'string', 'max:50'],
             'card_last4' => ['nullable', 'string', 'max:4'],
@@ -1231,6 +1430,10 @@ class TourismBusinessController extends Controller
             ])
             ->values()
             ->all();
+
+        if ($recentInquiries === []) {
+            $recentInquiries = $this->publicData()['inquiries'] ?? [];
+        }
 
         $summary = [];
         foreach ($resources as $resource) {
