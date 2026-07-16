@@ -25,6 +25,7 @@ class Destination extends Model
         'nearby_attractions',
         'latitude',
         'longitude',
+        'amount',
         'image_url',
         'featured',
         'status',
@@ -33,6 +34,7 @@ class Destination extends Model
     protected $casts = [
         'latitude' => 'decimal:8',
         'longitude' => 'decimal:8',
+        'amount' => 'integer',
         'featured' => 'boolean',
     ];
 
@@ -400,6 +402,9 @@ class Destination extends Model
             'image' => $imageUrl ?: null,
             'imageUrl' => $imageUrl ?: null,
             'image_url' => $imageUrl ?: null,
+            'amount' => $this->amount !== null ? (int) $this->amount : null,
+            'price' => $this->amount !== null ? (int) $this->amount : null,
+            'priceValue' => $this->amount !== null ? (int) $this->amount : null,
             'href' => '/destinations/' . $this->slug,
             'region' => $this->region,
             'province' => $this->province,

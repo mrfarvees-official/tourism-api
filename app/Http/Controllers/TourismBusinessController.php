@@ -6,10 +6,12 @@ use App\Models\ContentData;
 use App\Models\ContentSchema;
 use App\Models\Booking;
 use App\Models\Customer;
+use App\Models\CustomerReview;
 use App\Models\Destination;
 use App\Models\Stay;
 use App\Models\TenantAssets;
 use App\Models\Tenant;
+use App\Models\TenantInboxMessage;
 use App\Models\TourismActivity;
 use App\Models\TourismPackage;
 use App\Models\TourismService;
@@ -43,10 +45,129 @@ class TourismBusinessController extends Controller
         return Tenant::query()->where('key', $tenantKey)->first();
     }
 
+    private function defaultTenantKey(): string
+    {
+        return 'lanka-trails';
+    }
+
     private function requestedVariant(Request $request): ?string
     {
         $variant = trim((string) $request->query('variant', ''));
         return $variant !== '' ? $variant : null;
+    }
+
+    private function customerTenant(Request $request): Tenant
+    {
+        $tenantKey = trim((string) $request->input('tenantKey', $request->query('tenantKey', $this->defaultTenantKey())));
+        $tenant = $this->tenant($tenantKey);
+
+        if (!$tenant) {
+            abort(422, 'Tenant not found.');
+        }
+
+        return $tenant;
+    }
+
+    private function seedCustomerTenant(Tenant $tenant): Customer
+    {
+        $customer = Customer::query()->where('tenant_id', $tenant->id)->orderBy('id')->first();
+        if ($customer) {
+            return $customer;
+        }
+
+        $customer = Customer::query()->create([
+            'tenant_id' => $tenant->id,
+            'full_name' => 'Ayesha Khan',
+            'email' => 'ayesha.khan@example.com',
+            'phone' => '+94 77 123 4567',
+            'nationality' => 'Sri Lankan',
+            'passport_number' => 'N1234567',
+            'preferred_language' => 'English',
+            'loyalty_tier' => 'Insider',
+            'emergency_contact' => '+94 77 765 4321',
+            'address' => '45 Marine Drive, Colombo 03',
+        ]);
+
+        return $customer;
+    }
+
+    private function customerRecord(Tenant $tenant): Customer
+    {
+        $latestBooking = Booking::query()
+            ->where('tenant_id', $tenant->id)
+            ->latest('id')
+            ->first();
+
+        if ($latestBooking) {
+            if ($latestBooking->customer_id) {
+                $customer = Customer::query()->whereKey($latestBooking->customer_id)->first();
+                if ($customer) {
+                    return $customer;
+                }
+            }
+
+            $customerEmail = trim((string) ($latestBooking->customer_email ?? ''));
+            if ($customerEmail !== '') {
+                $customer = Customer::query()
+                    ->where('tenant_id', $tenant->id)
+                    ->where('email', $customerEmail)
+                    ->first();
+                if ($customer) {
+                    return $customer;
+                }
+            }
+
+            $customerName = trim((string) ($latestBooking->customer_name ?? ''));
+            if ($customerName !== '') {
+                $customer = Customer::query()
+                    ->where('tenant_id', $tenant->id)
+                    ->where('full_name', $customerName)
+                    ->first();
+                if ($customer) {
+                    return $customer;
+                }
+            }
+        }
+
+        return $this->seedCustomerTenant($tenant);
+    }
+
+    private function customerBookingsQuery(Customer $customer)
+    {
+        return Booking::query()
+            ->where('tenant_id', $customer->tenant_id)
+            ->where(function ($query) use ($customer) {
+                $query->where('customer_id', $customer->id)
+                    ->orWhere('customer_email', $customer->email)
+                    ->orWhere('customer_name', $customer->full_name);
+            });
+    }
+
+    private function customerReviewsQuery(Customer $customer)
+    {
+        return CustomerReview::query()
+            ->where('tenant_id', $customer->tenant_id)
+            ->where('customer_id', $customer->id);
+    }
+
+    private function customerBookingsList(Customer $customer): array
+    {
+        return $this->customerBookingsQuery($customer)
+            ->latest('id')
+            ->get()
+            ->map(fn (Booking $booking) => $booking->toCustomerSummaryArray())
+            ->values()
+            ->all();
+    }
+
+    private function customerReviewsList(Customer $customer): array
+    {
+        return $this->customerReviewsQuery($customer)
+            ->latest('id')
+            ->get()
+            ->map(fn (CustomerReview $review) => $review->toCustomerArray())
+            ->values()
+            ->all();
     }
 
     private function normalizePublicResource(string $resource): string
@@ -506,80 +627,9 @@ class TourismBusinessController extends Controller
         ];
     }
 
-    private function customerData(): array
+    private function customerBookingRecord(Customer $customer, string $bookingReference): ?Booking
     {
-        $data = $this->publicData();
-
-        $data['inquiries'] = [
-            [
-                'id' => 'inq_001',
-                'name' => 'Ayesha Khan',
-                'email' => 'ayesha.khan@example.com',
-                'message' => 'Need help planning a cultural triangle trip.',
-                'status' => 'new',
-                'createdAt' => '2026-07-09T08:15:00.000Z',
-            ],
-            [
-                'id' => 'inq_002',
-                'name' => 'Maya Silva',
-                'email' => 'maya.silva@example.com',
-                'message' => 'Looking for a coastal family package in August.',
-                'status' => 'new',
-                'createdAt' => '2026-07-10T10:40:00.000Z',
-            ],
-        ];
-
-        return $data;
-    }
-
-    private function seedCustomerBookings(Tenant $tenant): void
-    {
-        if (Booking::query()->where('tenant_id', $tenant->id)->exists()) {
-            return;
-        }
-
-        foreach (Booking::defaultSeedRows() as $row) {
-            Booking::query()->updateOrCreate(
-                [
-                    'tenant_id' => $tenant->id,
-                    'reference' => $row['reference'],
-                ],
-                array_merge($row, [
-                    'tenant_id' => $tenant->id,
-                ]),
-            );
-        }
-    }
-
-    private function customerBookingsList(): array
-    {
-        $tenant = $this->tenant('lanka-trails');
-        if (!$tenant) {
-            return $this->customerData()['bookings'];
-        }
-
-        $this->seedCustomerBookings($tenant);
-
-        return Booking::query()
-            ->where('tenant_id', $tenant->id)
-            ->latest('id')
-            ->get()
-            ->map(fn (Booking $booking) => $booking->toCustomerSummaryArray())
-            ->values()
-            ->all();
-    }
-
-    private function customerBookingRecord(string $bookingReference): ?Booking
-    {
-        $tenant = $this->tenant('lanka-trails');
-        if (!$tenant) {
-            return null;
-        }
-
-        $this->seedCustomerBookings($tenant);
-
-        return Booking::query()
-            ->where('tenant_id', $tenant->id)
+        return $this->customerBookingsQuery($customer)
             ->where(function ($query) use ($bookingReference) {
                 $query->where('reference', $bookingReference)
                     ->orWhere('id', $bookingReference);
@@ -587,170 +637,236 @@ class TourismBusinessController extends Controller
             ->first();
     }
 
-    private function bookingSummary(array|Booking $booking): array
+    private function customerDashboardData(Customer $customer, Tenant $tenant): array
     {
-        if ($booking instanceof Booking) {
-            return $booking->toCustomerSummaryArray();
+        $bookings = $this->customerBookingsList($customer);
+        $reviews = $this->customerReviewsList($customer);
+        $upcomingTrips = collect($bookings)->filter(function (array $booking) {
+            $status = strtolower((string) ($booking['bookingStatus'] ?? $booking['status'] ?? ''));
+            return in_array($status, ['confirmed', 'pending', 'checked_in'], true);
+        })->count();
+        $completedTrips = collect($bookings)->filter(fn (array $booking) => strtolower((string) ($booking['bookingStatus'] ?? $booking['status'] ?? '')) === 'completed')->count();
+        $pendingPayments = collect($bookings)->filter(fn (array $booking) => strtolower((string) ($booking['paymentStatus'] ?? $booking['payment_status'] ?? 'unpaid')) !== 'paid')->count();
+        $totalSpent = collect($bookings)->sum(fn (array $booking) => (int) ($booking['paidAmount'] ?? $booking['paid_amount'] ?? 0));
+        $nextTrip = collect($bookings)
+            ->filter(fn (array $booking) => strtolower((string) ($booking['bookingStatus'] ?? $booking['status'] ?? '')) !== 'cancelled')
+            ->sortBy(fn (array $booking) => (string) ($booking['travelDate'] ?? $booking['travel_date'] ?? ''))
+            ->first();
+
+        $tasks = [];
+
+        if ($nextTrip) {
+            $tasks[] = [
+                'id' => 'trip-review',
+                'title' => 'Review your next trip details',
+                'detail' => trim((string) ($nextTrip['packageName'] ?? $nextTrip['package_name'] ?? 'Trip')) . ' starts on ' . (string) ($nextTrip['travelDate'] ?? $nextTrip['travel_date'] ?? 'soon') . '.',
+                'status' => 'open',
+                'actionLabel' => 'Open booking',
+                'href' => '/customer/bookings/' . (string) ($nextTrip['reference'] ?? $nextTrip['booking_reference'] ?? ''),
+            ];
+        } else {
+            $tasks[] = [
+                'id' => 'trip-review',
+                'title' => 'No upcoming trips',
+                'detail' => 'You do not have any confirmed trips yet. Start a new booking when you are ready.',
+                'status' => 'done',
+                'actionLabel' => 'Start booking',
+                'href' => '/booking/start',
+            ];
         }
 
+        $tasks[] = $pendingPayments > 0
+            ? [
+                'id' => 'payment-followup',
+                'title' => 'Settle pending payments',
+                'detail' => $pendingPayments . ' booking' . ($pendingPayments === 1 ? '' : 's') . ' still need a payment action.',
+                'status' => 'attention',
+                'actionLabel' => 'View bookings',
+                'href' => '/customer/bookings',
+            ]
+            : [
+                'id' => 'payment-followup',
+                'title' => 'All payments are up to date',
+                'detail' => 'Payment tracking is clear across your active bookings.',
+                'status' => 'done',
+            ];
+
+        $tasks[] = $reviews !== []
+            ? [
+                'id' => 'review-followup',
+                'title' => 'Share trip feedback',
+                'detail' => 'You already shared ' . count($reviews) . ' review' . (count($reviews) === 1 ? '' : 's') . '. Keep feedback coming after each trip.',
+                'status' => 'in_progress',
+                'actionLabel' => 'See reviews',
+                'href' => '/customer/reviews',
+            ]
+            : [
+                'id' => 'review-followup',
+                'title' => 'Add your first review',
+                'detail' => 'Completed trips can be reviewed from the customer review screen.',
+                'status' => 'open',
+                'actionLabel' => 'Write review',
+                'href' => '/customer/reviews',
+            ];
+
+        $support = array_slice(array_map(static function (array $booking): array {
+            $itinerary = is_array($booking['itinerary'] ?? null) ? $booking['itinerary'] : [];
+
+            return [
+                'id' => (string) ($booking['id'] ?? $booking['reference'] ?? ''),
+                'title' => trim((string) ($booking['reference'] ?? 'Booking')) . ' - ' . trim((string) ($booking['packageName'] ?? $booking['package_name'] ?? 'Trip')),
+                'detail' => trim((string) ($booking['notes'] ?? '')) ?: trim((string) ($itinerary[0] ?? $booking['route_summary'] ?? 'Support thread summary')),
+                'updatedAt' => (string) ($booking['updatedAt'] ?? $booking['updated_at'] ?? now()->toIso8601String()),
+            ];
+        }, $bookings), 0, 3);
+
         return [
-            'id' => $booking['id'],
-            'reference' => $booking['reference'],
-            'booking_reference' => $booking['reference'],
-            'packageName' => $booking['packageName'],
-            'package_name' => $booking['packageName'],
-            'destination' => $booking['destination'],
-            'travelDate' => $booking['travelDate'],
-            'travel_date' => $booking['travelDate'],
-            'returnDate' => $booking['returnDate'],
-            'return_date' => $booking['returnDate'],
-            'travelersCount' => $booking['travelersCount'],
-            'totalAmount' => $booking['totalAmount'],
-            'total_amount' => $booking['totalAmount'],
-            'paidAmount' => $booking['paidAmount'],
-            'paid_amount' => $booking['paidAmount'],
-            'currency' => $booking['currency'],
-            'bookingStatus' => $booking['bookingStatus'],
-            'status' => $booking['bookingStatus'],
-            'paymentStatus' => $booking['paymentStatus'],
-            'payment_status' => $booking['paymentStatus'],
-            'paymentDueDate' => $booking['paymentDueDate'],
-            'notes' => $booking['notes'],
-            'addOns' => $booking['addOns'],
-            'supportContact' => $booking['supportContact'],
-            'itinerary' => $booking['itinerary'],
+            'tenant' => [
+                'key' => $tenant->key,
+                'name' => $tenant->name,
+                'supportEmail' => 'support@lankatrails.example',
+            ],
+            'profile' => $customer->toTourismArray(),
+            'summary' => [
+                'upcomingTrips' => $upcomingTrips,
+                'completedTrips' => $completedTrips,
+                'pendingPayments' => $pendingPayments,
+                'totalSpent' => 'LKR ' . number_format($totalSpent),
+                'reviewCount' => count($reviews),
+                'loyaltyTier' => $customer->loyalty_tier,
+            ],
+            'nextTrip' => $nextTrip,
+            'bookings' => $bookings,
+            'reviews' => $reviews,
+            'tasks' => $tasks,
+            'support' => $support,
         ];
     }
 
     public function customerDashboard(Request $request): JsonResponse
     {
-        $data = $this->customerData();
-        $bookings = $this->customerBookingsList();
-        $reviews = $data['reviews'];
-        $nextTrip = $bookings[0] ?? null;
+        $tenant = $this->customerTenant($request);
+        $customer = $this->customerRecord($tenant);
 
-        return $this->ok([
-            'tenant' => $data['tenant'],
-            'profile' => $data['profile'],
-            'summary' => [
-                'upcomingTrips' => count($bookings),
-                'completedTrips' => 1,
-                'pendingPayments' => count(array_filter($bookings, fn (array $booking) => ($booking['paymentStatus'] ?? 'unpaid') !== 'paid')),
-                'totalSpent' => 'LKR 809,000',
-                'reviewCount' => count($reviews),
-                'loyaltyTier' => $data['profile']['loyaltyTier'],
-            ],
-            'nextTrip' => $nextTrip,
-            'bookings' => $bookings,
-            'reviews' => $reviews,
-            'tasks' => [
-                [
-                    'id' => 'trip-review',
-                    'title' => 'Review your next trip details',
-                    'detail' => 'Check passengers, pickup notes, and add-ons before departure.',
-                    'status' => 'open',
-                    'actionLabel' => 'Open booking',
-                    'href' => '/customer/bookings/TBK-2026-000101',
-                ],
-                [
-                    'id' => 'payment-followup',
-                    'title' => 'Settle pending payments',
-                    'detail' => '2 bookings still need a payment action.',
-                    'status' => 'attention',
-                    'actionLabel' => 'View bookings',
-                    'href' => '/customer/bookings',
-                ],
-                [
-                    'id' => 'review-followup',
-                    'title' => 'Share trip feedback',
-                    'detail' => 'You already shared 2 reviews. Keep feedback coming after each trip.',
-                    'status' => 'in_progress',
-                    'actionLabel' => 'See reviews',
-                    'href' => '/customer/reviews',
-                ],
-            ],
-            'support' => [
-                [
-                    'id' => 'bk_001',
-                    'title' => 'TBK-2026-000101 - Sri Lanka Highlights',
-                    'detail' => 'Pickup requested from Bandaranaike International Airport.',
-                    'updatedAt' => '2026-07-01T13:05:00.000Z',
-                ],
-                [
-                    'id' => 'bk_002',
-                    'title' => 'TBK-2026-000102 - Hill Country Weekend',
-                    'detail' => 'Child seat requested for the transfer.',
-                    'updatedAt' => '2026-07-02T11:40:00.000Z',
-                ],
-                [
-                    'id' => 'bk_003',
-                    'title' => 'TBK-2026-000103 - Southern Coast Escape',
-                    'detail' => 'Sea-view room preference.',
-                    'updatedAt' => '2026-07-04T14:10:00.000Z',
-                ],
-            ],
-        ]);
+        return $this->ok($this->customerDashboardData($customer, $tenant));
     }
 
     public function customerBookings(Request $request): JsonResponse
     {
-        return $this->ok($this->customerBookingsList());
+        $tenant = $this->customerTenant($request);
+        $customer = $this->customerRecord($tenant);
+
+        return $this->ok($this->customerBookingsList($customer));
     }
 
     public function customerBookingShow(Request $request, string $bookingReference): JsonResponse
     {
-        $booking = $this->customerBookingRecord($bookingReference);
+        $tenant = $this->customerTenant($request);
+        $customer = $this->customerRecord($tenant);
+        $booking = $this->customerBookingRecord($customer, $bookingReference);
 
-        if (!$booking) {
-            $fallbackBooking = collect($this->customerData()['bookings'])->firstWhere('reference', $bookingReference)
-                ?? collect($this->customerData()['bookings'])->firstWhere('id', $bookingReference);
-
-            if ($fallbackBooking) {
-                return $this->ok($this->bookingSummary($fallbackBooking));
-            }
-
-            return $this->error('Record not found.');
-        }
-
-        return $this->ok($booking->toCustomerSummaryArray());
+        return $booking
+            ? $this->ok($booking->toCustomerSummaryArray())
+            : $this->error('Record not found.');
     }
 
     public function customerProfile(Request $request): JsonResponse
     {
-        if (strtoupper($request->method()) === 'PATCH') {
-            $profile = $this->customerData()['profile'];
+        $tenant = $this->customerTenant($request);
+        $customer = $this->customerRecord($tenant);
 
-            return $this->ok([
-                'name' => (string) $request->input('name', $profile['name']),
-                'email' => (string) $request->input('email', $profile['email']),
-                'phone' => (string) $request->input('phone', $profile['phone']),
-                'nationality' => (string) $request->input('nationality', 'Sri Lankan'),
-                'passportNumber' => (string) $request->input('passportNumber', 'N1234567'),
-                'preferredLanguage' => (string) $request->input('preferredLanguage', 'English'),
-                'emergencyContact' => (string) $request->input('emergencyContact', '+94 77 765 4321'),
-                'address' => (string) $request->input('address', '45 Marine Drive, Colombo 03'),
-                'updatedAt' => now()->toIso8601String(),
+        if (strtoupper($request->method()) === 'PATCH') {
+            $validated = $request->validate([
+                'tenantKey' => ['required', 'string'],
+                'name' => ['nullable', 'string', 'max:255'],
+                'email' => ['nullable', 'email', 'max:255'],
+                'phone' => ['nullable', 'string', 'max:100'],
+                'nationality' => ['nullable', 'string', 'max:150'],
+                'passportNumber' => ['nullable', 'string', 'max:100'],
+                'preferredLanguage' => ['nullable', 'string', 'max:100'],
+                'emergencyContact' => ['nullable', 'string', 'max:255'],
+                'address' => ['nullable', 'string'],
             ]);
+
+            $customer->fill([
+                'full_name' => trim((string) ($validated['name'] ?? $customer->full_name)) ?: $customer->full_name,
+                'email' => array_key_exists('email', $validated) ? (trim((string) $validated['email']) ?: null) : $customer->email,
+                'phone' => array_key_exists('phone', $validated) ? (trim((string) $validated['phone']) ?: null) : $customer->phone,
+                'nationality' => array_key_exists('nationality', $validated) ? (trim((string) $validated['nationality']) ?: null) : $customer->nationality,
+                'passport_number' => array_key_exists('passportNumber', $validated) ? (trim((string) $validated['passportNumber']) ?: null) : $customer->passport_number,
+                'preferred_language' => array_key_exists('preferredLanguage', $validated) ? (trim((string) $validated['preferredLanguage']) ?: null) : $customer->preferred_language,
+                'emergency_contact' => array_key_exists('emergencyContact', $validated) ? (trim((string) $validated['emergencyContact']) ?: null) : $customer->emergency_contact,
+                'address' => array_key_exists('address', $validated) ? (trim((string) $validated['address']) ?: null) : $customer->address,
+            ]);
+            $customer->save();
         }
 
-        return $this->ok($this->customerData()['profile']);
+        return $this->ok($customer->toTourismArray());
     }
 
     public function customerReviews(Request $request): JsonResponse
     {
+        $tenant = $this->customerTenant($request);
+        $customer = $this->customerRecord($tenant);
+
         if (strtoupper($request->method()) === 'POST') {
-            return $this->ok([
-                'id' => (string) random_int(1000, 9999),
-                'bookingId' => $request->input('bookingId'),
-                'title' => $request->input('title'),
-                'message' => $request->input('message'),
-                'rating' => (int) $request->input('rating', 5),
+            $validated = $request->validate([
+                'tenantKey' => ['required', 'string'],
+                'bookingId' => ['required', 'string'],
+                'title' => ['required', 'string', 'max:255'],
+                'message' => ['required', 'string'],
+                'rating' => ['required', 'integer', 'min:1', 'max:5'],
+            ]);
+
+            $booking = $this->customerBookingRecord($customer, (string) $validated['bookingId']);
+
+            $review = CustomerReview::query()->create([
+                'tenant_id' => $tenant->id,
+                'customer_id' => $customer->id,
+                'booking_id' => $booking?->id,
+                'booking_reference' => $booking?->reference ?? (string) $validated['bookingId'],
+                'title' => trim((string) $validated['title']),
+                'message' => trim((string) $validated['message']),
+                'rating' => (int) $validated['rating'],
                 'status' => 'submitted',
-                'createdAt' => now()->toISOString(),
-            ], 201);
+            ]);
+
+            return $this->ok($review->toCustomerArray(), 201);
         }
 
-        return $this->ok($this->customerData()['reviews']);
+        return $this->ok($this->customerReviewsList($customer));
+    }
+
+    public function settleCustomerPayment(Request $request, string $bookingReference): JsonResponse
+    {
+        $tenant = $this->customerTenant($request);
+        $customer = $this->customerRecord($tenant);
+        $booking = $this->customerBookingRecord($customer, $bookingReference);
+
+        if (!$booking) {
+            return $this->error('Record not found.');
+        }
+
+        $validated = $request->validate([
+            'tenantKey' => ['required', 'string'],
+            'payment_method' => ['nullable', 'string', 'max:50'],
+            'payment_brand' => ['nullable', 'string', 'max:50'],
+            'card_last4' => ['nullable', 'string', 'max:4'],
+            'card_holder_name' => ['nullable', 'string', 'max:255'],
+            'amount' => ['nullable', 'integer', 'min:0'],
+            'status' => ['nullable', 'string', 'max:50'],
+        ]);
+
+        $booking->update([
+            'paid_amount' => (int) $booking->total_amount,
+            'payment_status' => 'paid',
+            'booking_status' => in_array(strtolower((string) $booking->booking_status), ['pending', 'draft'], true)
+                ? 'confirmed'
+                : $booking->booking_status,
+            'payment_due_date' => $booking->payment_due_date ?? now()->toDateString(),
+        ]);
+
+        return $this->ok($booking->fresh()->toCustomerSummaryArray());
     }
 
     private function publicCatalogIndex(Request $request, string $tenantKey, string $resource): JsonResponse
@@ -1099,7 +1215,22 @@ class TourismBusinessController extends Controller
         $labels = $this->analyticsLabels($period, $endDate);
         $resources = $this->analyticsResources($tenant, $period, $endDate, $labels);
         $packages = $this->catalogRows('packages', $tenant);
-        $recentInquiries = array_slice($this->customerData()['inquiries'] ?? [], 0, 5);
+        $recentInquiries = TenantInboxMessage::query()
+            ->where('tenant_id', $tenant->id)
+            ->orderByDesc('updated_at')
+            ->limit(5)
+            ->get()
+            ->map(fn (TenantInboxMessage $message) => [
+                'id' => $message->id,
+                'name' => $message->name,
+                'email' => $message->email,
+                'message' => $message->message,
+                'status' => $message->status,
+                'createdAt' => $message->created_at,
+                'updatedAt' => $message->updated_at,
+            ])
+            ->values()
+            ->all();
 
         $summary = [];
         foreach ($resources as $resource) {
@@ -1319,7 +1450,3 @@ class TourismBusinessController extends Controller
     }
 
 }
-
-
-
-

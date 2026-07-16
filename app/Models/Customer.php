@@ -40,6 +40,12 @@ class Customer extends Model
             'loyalty_tier' => $this->loyalty_tier,
             'emergency_contact' => $this->emergency_contact,
             'address' => $this->address,
+            'passportNumber' => $this->passport_number,
+            'preferredLanguage' => $this->preferred_language,
+            'loyaltyTier' => $this->loyalty_tier,
+            'emergencyContact' => $this->emergency_contact,
+            'createdAt' => $this->created_at,
+            'updatedAt' => $this->updated_at,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

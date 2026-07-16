@@ -102,11 +102,13 @@ Route::get('/public/{tenantKey}/activities', [TourismBusinessController::class, 
 Route::get('/public/{tenantKey}/activities/{slug}', [TourismBusinessController::class, 'publicActivityShow']);
 Route::get('/public/{tenantKey}/reviews', [TourismBusinessController::class, 'publicReviews']);
 Route::post('/public/{tenantKey}/bookings', [BookingController::class, 'storePublic']);
+Route::post('/public/{tenantKey}/bookings/{bookingReference}/payments', [CustomerPaymentController::class, 'storePublic']);
 Route::post('/public/{tenantKey}/inquiries', [TourismBusinessController::class, 'storeInquiry']);
 
 Route::get('/customer/dashboard', [TourismBusinessController::class, 'customerDashboard']);
 Route::get('/customer/bookings', [TourismBusinessController::class, 'customerBookings']);
 Route::get('/customer/bookings/{bookingReference}', [TourismBusinessController::class, 'customerBookingShow']);
+Route::post('/customer/bookings/{bookingReference}/payments', [CustomerPaymentController::class, 'storeCustomer']);
 Route::match(['get', 'patch'], '/customer/profile', [TourismBusinessController::class, 'customerProfile']);
 Route::match(['get', 'post'], '/customer/reviews', [TourismBusinessController::class, 'customerReviews']);
 
@@ -155,3 +157,4 @@ Route::middleware(['auth:sanctum', 'tracked'])->group(function () {
         Route::delete('/transport-options/{transportOption}', [TransportOptionController::class, 'destroy'])->whereNumber('transportOption');
     });
 });
+

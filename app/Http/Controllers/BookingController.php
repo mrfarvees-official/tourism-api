@@ -3,11 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Booking;
+use App\Models\Customer;
 use App\Models\Tenant;
 use App\Models\TenantUser;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 
 class BookingController extends Controller
 {
@@ -62,6 +62,7 @@ class BookingController extends Controller
         }
 
         foreach (Booking::defaultSeedRows() as $row) {
+            $customer = $this->resolveCustomer($tenant, $row);
             Booking::query()->updateOrCreate(
                 [
                     'tenant_id' => $tenant->id,
@@ -69,18 +70,119 @@ class BookingController extends Controller
                 ],
                 array_merge($row, [
                     'tenant_id' => $tenant->id,
+                    'customer_id' => $customer?->id,
                 ]),
             );
         }
     }
 
+    private function resolveCustomer(Tenant $tenant, array $data, ?Booking $existing = null): ?Customer
+    {
+        $customerName = trim((string) ($data['customer_name'] ?? ''));
+        $customerEmail = trim((string) ($data['customer_email'] ?? ''));
+        $query = Customer::query()->where('tenant_id', $tenant->id);
+
+        if ($customerEmail !== '') {
+            $query->where('email', $customerEmail);
+        } elseif ($customerName !== '') {
+            $query->where('full_name', $customerName);
+        }
+
+        $customer = $query->first();
+        if ($customer) {
+            return $customer;
+        }
+
+        if ($existing?->customer_id) {
+            return Customer::query()->whereKey($existing->customer_id)->first();
+        }
+
+        if ($customerName === '' && $customerEmail === '') {
+            return null;
+        }
+
+        return Customer::query()->create([
+            'tenant_id' => $tenant->id,
+            'full_name' => $customerName !== '' ? $customerName : 'Customer',
+            'email' => $customerEmail !== '' ? $customerEmail : null,
+            'phone' => trim((string) ($data['customer_phone'] ?? '')) ?: null,
+            'nationality' => trim((string) ($data['nationality'] ?? '')) ?: null,
+            'passport_number' => trim((string) ($data['passport_number'] ?? '')) ?: null,
+            'preferred_language' => trim((string) ($data['preferred_language'] ?? '')) ?: null,
+            'loyalty_tier' => trim((string) ($data['loyalty_tier'] ?? 'Explorer')) ?: 'Explorer',
+            'emergency_contact' => trim((string) ($data['emergency_contact'] ?? '')) ?: null,
+            'address' => trim((string) ($data['address'] ?? '')) ?: null,
+        ]);
+    }
+
+    private function generateBookingReference(Tenant $tenant): string
+    {
+        $year = now()->year;
+        $prefix = sprintf('TBK-%d-', $year);
+        $maxSequence = Booking::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('reference', 'like', $prefix . '%')
+            ->pluck('reference')
+            ->reduce(function (int $carry, string $reference) use ($year) {
+                if (!preg_match('/^TBK-' . $year . '-(\d{6})$/', $reference, $matches)) {
+                    return $carry;
+                }
+
+                return max($carry, (int) $matches[1]);
+            }, 0);
+
+        return $prefix . str_pad((string) ($maxSequence + 1), 6, '0', STR_PAD_LEFT);
+    }
+
+    private function bookingReferenceExists(Tenant $tenant, string $reference, ?Booking $existing = null): bool
+    {
+        $query = Booking::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('reference', $reference);
+
+        if ($existing) {
+            $query->whereKeyNot($existing->id);
+        }
+
+        return $query->exists();
+    }
+
+    private function resolveBookingReference(Tenant $tenant, ?Booking $existing, ?string $reference): string
+    {
+        $candidate = trim((string) $reference);
+
+        if ($existing && $candidate === '') {
+            return $existing->reference;
+        }
+
+        if ($candidate === '') {
+            return $this->generateBookingReference($tenant);
+        }
+
+        if ($existing && $candidate === $existing->reference) {
+            return $existing->reference;
+        }
+
+        if ($this->bookingReferenceExists($tenant, $candidate, $existing)) {
+            return $this->generateBookingReference($tenant);
+        }
+
+        return $candidate;
+    }
+
     private function bookingPayload(array $data, Tenant $tenant, ?Booking $existing = null): array
     {
-        $reference = trim((string) ($data['reference'] ?? ''));
+        $reference = $this->resolveBookingReference($tenant, $existing, $data['reference'] ?? null);
+        $customer = $this->resolveCustomer($tenant, $data, $existing);
+        $tripHighlights = $data['trip_highlights'] ?? null;
+        $addOns = $data['add_ons'] ?? $tripHighlights ?? null;
+        $itinerary = $data['itinerary'] ?? null;
+        $supportContact = trim((string) ($data['support_contact'] ?? ($existing?->support_contact ?? 'support@lankatrails.example')));
 
         return [
             'tenant_id' => $tenant->id,
-            'reference' => Booking::normalizeReference($reference, $existing?->id),
+            'customer_id' => $customer?->id ?? $existing?->customer_id,
+            'reference' => $reference,
             'customer_name' => trim((string) ($data['customer_name'] ?? 'Customer')),
             'customer_email' => trim((string) ($data['customer_email'] ?? '')),
             'package_name' => trim((string) ($data['package_name'] ?? 'Custom Booking')),
@@ -106,7 +208,10 @@ class BookingController extends Controller
             'notes' => (string) ($data['notes'] ?? ''),
             'route_summary' => trim((string) ($data['route_summary'] ?? '')),
             'trip_story' => trim((string) ($data['trip_story'] ?? $data['journey_story'] ?? '')),
-            'trip_highlights' => $data['trip_highlights'] ?? null,
+            'trip_highlights' => $tripHighlights,
+            'add_ons' => is_array($addOns) ? $addOns : null,
+            'itinerary' => is_array($itinerary) ? $itinerary : null,
+            'support_contact' => $supportContact !== '' ? $supportContact : 'support@lankatrails.example',
             'destination_story' => (string) ($data['destination_story'] ?? ''),
             'package_story' => (string) ($data['package_story'] ?? ''),
             'service_story' => (string) ($data['service_story'] ?? ''),
@@ -131,7 +236,7 @@ class BookingController extends Controller
     {
         $tenant = $this->resolveTenant($request);
         $this->assertTenantUser($request, $tenant);
-        $this->seedTenantBookings($tenant);
+        // $this->seedTenantBookings($tenant);
 
         $perPage = max(1, min((int) $request->integer('per_page', 10), 50));
         $search = trim((string) $request->input('search', ''));
@@ -280,6 +385,9 @@ class BookingController extends Controller
         $validated = $request->validate([
             'customer_name' => ['required', 'string', 'max:255'],
             'customer_email' => ['nullable', 'string', 'max:255'],
+            'customer_phone' => ['nullable', 'string', 'max:100'],
+            'booking_status' => ['nullable', 'string', 'max:50'],
+            'payment_status' => ['nullable', 'string', 'max:50'],
             'destination' => ['nullable', 'string', 'max:255'],
             'destination_slug' => ['nullable', 'string', 'max:255'],
             'package_name' => ['nullable', 'string', 'max:255'],
@@ -305,16 +413,60 @@ class BookingController extends Controller
             'package_story' => ['nullable', 'string'],
             'service_story' => ['nullable', 'string'],
             'activity_story' => ['nullable', 'string'],
+            'add_ons' => ['nullable'],
+            'itinerary' => ['nullable'],
+            'support_contact' => ['nullable', 'string', 'max:255'],
         ]);
 
         $payload = $this->bookingPayload(array_merge($validated, [
             'currency' => 'LKR',
-            'booking_status' => 'pending',
-            'payment_status' => 'unpaid',
+            'booking_status' => $validated['booking_status'] ?? ((int) ($validated['paid_amount'] ?? 0) > 0 ? 'confirmed' : 'pending'),
+            'payment_status' => $validated['payment_status'] ?? ((int) ($validated['paid_amount'] ?? 0) > 0 ? 'paid' : 'unpaid'),
         ]), $tenant);
 
         $record = Booking::query()->create($payload);
 
         return $this->ok($record->toCustomerSummaryArray(), 201);
     }
+
+    public function settleCustomerPayment(Request $request, string $bookingReference): JsonResponse
+    {
+        $tenantKey = trim((string) $request->input('tenantKey', 'lanka-trails'));
+        $tenant = Tenant::query()->where('key', $tenantKey)->first();
+        if (!$tenant) {
+            return $this->error('Tenant not found.', 422);
+        }
+
+        $booking = Booking::query()
+            ->where('tenant_id', $tenant->id)
+            ->where(function ($query) use ($bookingReference) {
+                $query->where('reference', $bookingReference)
+                    ->orWhere('id', $bookingReference);
+            })
+            ->first();
+
+        if (!$booking) {
+            return $this->error('Record not found.');
+        }
+
+        $validated = $request->validate([
+            'tenantKey' => ['required', 'string'],
+            'payment_method' => ['nullable', 'string', 'max:50'],
+            'payment_brand' => ['nullable', 'string', 'max:50'],
+            'card_last4' => ['nullable', 'string', 'max:4'],
+            'card_holder_name' => ['nullable', 'string', 'max:255'],
+            'amount' => ['nullable', 'integer', 'min:0'],
+            'status' => ['nullable', 'string', 'max:50'],
+        ]);
+
+        $booking->update([
+            'paid_amount' => max((int) $booking->total_amount, (int) ($validated['amount'] ?? $booking->total_amount)),
+            'payment_status' => 'paid',
+            'booking_status' => $booking->booking_status === 'draft' ? 'confirmed' : $booking->booking_status,
+            'payment_due_date' => $booking->payment_due_date ?? now()->toDateString(),
+        ]);
+
+        return $this->ok($booking->fresh()->toCustomerSummaryArray());
+    }
 }
+

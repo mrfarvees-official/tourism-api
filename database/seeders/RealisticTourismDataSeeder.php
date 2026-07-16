@@ -3,6 +3,8 @@
 namespace Database\Seeders;
 
 use App\Models\Booking;
+use App\Models\Customer;
+use App\Models\CustomerReview;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Database\Seeder;
@@ -48,6 +50,23 @@ class RealisticTourismDataSeeder extends Seeder
             ],
         ]);
 
+        $customerProfile = Customer::query()->updateOrCreate(
+            [
+                'tenant_id' => $tenant->id,
+                'email' => 'customer1@example.test',
+            ],
+            [
+                'full_name' => 'Test Customer',
+                'phone' => '+94 77 123 4567',
+                'nationality' => 'Sri Lankan',
+                'passport_number' => 'N1234567',
+                'preferred_language' => 'English',
+                'loyalty_tier' => 'Insider',
+                'emergency_contact' => '+94 77 765 4321',
+                'address' => '45 Marine Drive, Colombo 03',
+            ],
+        );
+
         $bookings = [
             [
                 'reference' => 'TBK-2026-900001',
@@ -83,6 +102,18 @@ class RealisticTourismDataSeeder extends Seeder
                     'Tea plantation visit',
                     'Ella Nine Arch Bridge',
                 ],
+                'add_ons' => [
+                    'Kandy Temple of the Tooth',
+                    'Tea plantation visit',
+                    'Ella Nine Arch Bridge',
+                ],
+                'itinerary' => [
+                    'Colombo arrival',
+                    'Kandy city stay',
+                    'Nuwara Eliya tea country',
+                    'Ella hill escape',
+                ],
+                'support_contact' => 'support@lankatrails.example',
                 'notes' => 'Vegetarian meals and airport pickup requested.',
             ],
             [
@@ -119,6 +150,17 @@ class RealisticTourismDataSeeder extends Seeder
                     'Mirissa Beach',
                     'Whale-watching tour',
                 ],
+                'add_ons' => [
+                    'Galle Fort',
+                    'Mirissa Beach',
+                    'Whale-watching tour',
+                ],
+                'itinerary' => [
+                    'Colombo pickup',
+                    'Galle heritage stop',
+                    'Mirissa beach stay',
+                ],
+                'support_contact' => 'bookings@lankatrails.example',
                 'notes' => 'Two child seats are required.',
             ],
             [
@@ -152,11 +194,28 @@ class RealisticTourismDataSeeder extends Seeder
                     'Sigiriya Rock Fortress',
                     'Polonnaruwa Ancient City',
                 ],
+                'add_ons' => [
+                    'Dambulla Cave Temple',
+                    'Sigiriya Rock Fortress',
+                    'Polonnaruwa Ancient City',
+                ],
+                'itinerary' => [
+                    'Dambulla cave temple',
+                    'Sigiriya fortress climb',
+                    'Polonnaruwa ancient city',
+                ],
+                'support_contact' => 'operations@lankatrails.example',
                 'notes' => 'English-speaking heritage guide requested.',
             ],
         ];
 
         foreach ($bookings as $bookingData) {
+            $bookingCustomer = Customer::query()
+                ->where('tenant_id', $tenant->id)
+                ->where('email', $bookingData['customer_email'])
+                ->first()
+                ?? $customerProfile;
+
             Booking::query()->updateOrCreate(
                 [
                     'tenant_id' => $tenant->id,
@@ -164,6 +223,47 @@ class RealisticTourismDataSeeder extends Seeder
                 ],
                 array_merge($bookingData, [
                     'tenant_id' => $tenant->id,
+                    'customer_id' => $bookingCustomer->id,
+                ]),
+            );
+        }
+
+        $reviews = [
+            [
+                'booking_reference' => 'TBK-2026-900001',
+                'title' => 'Excellent trip planning',
+                'message' => 'The itinerary was practical, the driver was on time, and the support team responded fast.',
+                'rating' => 5,
+                'status' => 'published',
+            ],
+            [
+                'booking_reference' => 'TBK-2026-900002',
+                'title' => 'Smooth hill-country weekend',
+                'message' => 'The child seat request was handled quickly and the schedule stayed relaxed.',
+                'rating' => 5,
+                'status' => 'published',
+            ],
+        ];
+
+        foreach ($reviews as $reviewData) {
+            $booking = Booking::query()
+                ->where('tenant_id', $tenant->id)
+                ->where('reference', $reviewData['booking_reference'])
+                ->first();
+
+            if (!$booking) {
+                continue;
+            }
+
+            CustomerReview::query()->updateOrCreate(
+                [
+                    'tenant_id' => $tenant->id,
+                    'booking_reference' => $reviewData['booking_reference'],
+                ],
+                array_merge($reviewData, [
+                    'tenant_id' => $tenant->id,
+                    'customer_id' => $customerProfile->id,
+                    'booking_id' => $booking->id,
                 ]),
             );
         }

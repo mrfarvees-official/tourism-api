@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 
@@ -14,6 +15,7 @@ class Booking extends Model
 
     protected $fillable = [
         'tenant_id',
+        'customer_id',
         'reference',
         'customer_name',
         'customer_email',
@@ -41,6 +43,9 @@ class Booking extends Model
         'route_summary',
         'trip_story',
         'trip_highlights',
+        'add_ons',
+        'itinerary',
+        'support_contact',
         'destination_story',
         'package_story',
         'service_story',
@@ -58,6 +63,8 @@ class Booking extends Model
         'total_amount' => 'integer',
         'paid_amount' => 'integer',
         'trip_highlights' => 'array',
+        'add_ons' => 'array',
+        'itinerary' => 'array',
     ];
 
     public static function defaultSeedRows(): array
@@ -91,6 +98,9 @@ class Booking extends Model
                 'route_summary' => 'Sigiriya · Kandy · Ella · Mirissa',
                 'trip_story' => 'Classic circuit with culture, tea country, and coast.',
                 'trip_highlights' => ['Airport transfer', 'Private driver', 'Cultural guide'],
+                'add_ons' => ['Airport transfer', 'Private driver', 'Cultural guide'],
+                'itinerary' => ['Arrival in Colombo', 'Sigiriya day trip', 'Kandy temple trail', 'Ella tea country', 'South coast'],
+                'support_contact' => 'operations@lankatrails.example',
                 'destination_story' => 'Story-led route through the island.',
                 'package_story' => 'Built for first-time visitors.',
                 'service_story' => 'Simple airport logistics.',
@@ -124,6 +134,9 @@ class Booking extends Model
                 'route_summary' => 'Kandy · Nuwara Eliya · Ella',
                 'trip_story' => 'Short mountain escape with scenic views.',
                 'trip_highlights' => ['Child seat', 'Train tickets'],
+                'add_ons' => ['Child seat', 'Train tickets'],
+                'itinerary' => ['Nanu Oya pickup', 'Tea estate walk', 'Ella day excursion'],
+                'support_contact' => 'support@lankatrails.example',
                 'destination_story' => 'Cool-weather hill-country story.',
                 'package_story' => 'Rail-side stays and tea tastings.',
                 'service_story' => 'Driver stays with the trip.',
@@ -157,6 +170,9 @@ class Booking extends Model
                 'route_summary' => 'Galle · Mirissa · Bentota',
                 'trip_story' => 'Easy coastal route with marine and beach time.',
                 'trip_highlights' => ['Whale watching', 'Airport transfer'],
+                'add_ons' => ['Whale watching', 'Airport transfer'],
+                'itinerary' => ['Galle Fort', 'Mirissa beach time', 'Whale watching', 'Spa afternoon'],
+                'support_contact' => 'bookings@lankatrails.example',
                 'destination_story' => 'Historic port and beach days.',
                 'package_story' => 'Relaxed south coast loop.',
                 'service_story' => 'Spacious family transport.',
@@ -190,6 +206,9 @@ class Booking extends Model
                 'route_summary' => 'Anuradhapura · Sigiriya · Polonnaruwa',
                 'trip_story' => 'Heritage-first route with enough time at each site.',
                 'trip_highlights' => ['Private guide', 'Lunch stops'],
+                'add_ons' => ['Private guide', 'Lunch stops'],
+                'itinerary' => ['Anuradhapura', 'Sigiriya climb', 'Polonnaruwa bike tour'],
+                'support_contact' => 'operations@lankatrails.example',
                 'destination_story' => 'Ancient capitals and sacred sites.',
                 'package_story' => 'Heritage cycling and temple visits.',
                 'service_story' => 'Guide support for heritage routes.',
@@ -208,8 +227,46 @@ class Booking extends Model
         return 'TBK-' . now()->format('Y') . '-' . str_pad((string) ($fallback ?? random_int(1, 999999)), 6, '0', STR_PAD_LEFT);
     }
 
+    public function payments(): HasMany
+    {
+        return $this->hasMany(CustomerPayment::class, 'booking_id');
+    }
+
+    public function paymentSummary(): array
+    {
+        $paymentCount = $this->relationLoaded('payments') ? $this->payments->count() : $this->payments()->count();
+        $paidFromPayments = $paymentCount > 0
+            ? (int) ($this->relationLoaded('payments') ? $this->payments->sum('amount') : $this->payments()->sum('amount'))
+            : (int) ($this->paid_amount ?? 0);
+        $totalAmount = (int) ($this->total_amount ?? 0);
+        $remaining = max($totalAmount - $paidFromPayments, 0);
+
+        return [
+            'paid_amount' => $paidFromPayments,
+            'payment_status' => $remaining === 0 && $paidFromPayments > 0
+                ? 'paid'
+                : ($paidFromPayments > 0 ? 'partial' : 'unpaid'),
+            'payment_due_amount' => $remaining,
+            'payment_due_date' => optional($this->payment_due_date)->toDateString(),
+        ];
+    }
+
+    public function syncPaymentSnapshot(): self
+    {
+        $summary = $this->paymentSummary();
+
+        $this->forceFill([
+            'paid_amount' => $summary['paid_amount'],
+            'payment_status' => $summary['payment_status'],
+        ])->saveQuietly();
+
+        return $this->refresh();
+    }
+
     public function toTourismArray(): array
     {
+        $summary = $this->paymentSummary();
+
         return [
             'id' => $this->id,
             'slug' => $this->reference,
@@ -232,10 +289,10 @@ class Booking extends Model
                 'infants' => $this->infants,
                 'travelers_count' => $this->travelers_count,
                 'total_amount' => $this->total_amount,
-                'paid_amount' => $this->paid_amount,
+                'paid_amount' => $summary['paid_amount'],
                 'currency' => $this->currency,
                 'booking_status' => $this->booking_status,
-                'payment_status' => $this->payment_status,
+                'payment_status' => $summary['payment_status'],
                 'payment_due_date' => optional($this->payment_due_date)->toDateString(),
                 'route_summary' => $this->route_summary,
                 'trip_story' => $this->trip_story,
@@ -243,6 +300,7 @@ class Booking extends Model
                 'notes' => $this->notes,
             ],
             'reference' => $this->reference,
+            'customer_id' => $this->customer_id,
             'booking_reference' => $this->reference,
             'customer_name' => $this->customer_name,
             'customer_email' => $this->customer_email,
@@ -263,13 +321,13 @@ class Booking extends Model
             'travelers_count' => $this->travelers_count,
             'totalAmount' => $this->total_amount,
             'total_amount' => $this->total_amount,
-            'paidAmount' => $this->paid_amount,
-            'paid_amount' => $this->paid_amount,
+            'paidAmount' => $summary['paid_amount'],
+            'paid_amount' => $summary['paid_amount'],
             'currency' => $this->currency,
             'bookingStatus' => $this->booking_status,
             'status' => $this->booking_status,
-            'paymentStatus' => $this->payment_status,
-            'payment_status' => $this->payment_status,
+            'paymentStatus' => $summary['payment_status'],
+            'payment_status' => $summary['payment_status'],
             'paymentDueDate' => optional($this->payment_due_date)->toDateString(),
             'payment_due_date' => optional($this->payment_due_date)->toDateString(),
             'routeSummary' => $this->route_summary,
@@ -277,6 +335,11 @@ class Booking extends Model
             'tripStory' => $this->trip_story,
             'trip_story' => $this->trip_story,
             'trip_highlights' => $this->trip_highlights ?? [],
+            'addOns' => $this->add_ons ?? $this->trip_highlights ?? [],
+            'add_ons' => $this->add_ons ?? $this->trip_highlights ?? [],
+            'supportContact' => $this->support_contact ?? 'support@lankatrails.example',
+            'support_contact' => $this->support_contact ?? 'support@lankatrails.example',
+            'itinerary' => $this->itinerary ?? $this->derivedItinerary(),
             'notes' => $this->notes,
             'destination_story' => $this->destination_story,
             'package_story' => $this->package_story,
@@ -290,5 +353,24 @@ class Booking extends Model
     public function toCustomerSummaryArray(): array
     {
         return $this->toTourismArray();
+    }
+
+    private function derivedItinerary(): array
+    {
+        if (is_array($this->itinerary) && $this->itinerary !== []) {
+            return $this->itinerary;
+        }
+
+        $summary = trim((string) $this->route_summary);
+        if ($summary === '') {
+            return [];
+        }
+
+        $segments = preg_split('/\s*·\s*/u', $summary) ?: [];
+        if ($segments === []) {
+            $segments = preg_split('/\s*[|>]\s*/', $summary) ?: [];
+        }
+
+        return array_values(array_filter(array_map('trim', $segments)));
     }
 }

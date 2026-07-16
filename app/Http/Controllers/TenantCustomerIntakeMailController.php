@@ -6,6 +6,7 @@ use App\Models\Tenant;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Mail\Message;
 use Illuminate\Support\Facades\Mail;
 
 class TenantCustomerIntakeMailController extends Controller
@@ -96,8 +97,8 @@ class TenantCustomerIntakeMailController extends Controller
             note: $note,
         );
 
-        Mail::mailer('smtp')->raw($html, function ($message) use ($recipientEmail, $replyToEmail, $subject, $senderName, $customerName, $html) {
-            $message->to($recipientEmail, $customerName)->subject($subject)->setBody($html, 'text/html');
+        Mail::mailer('smtp')->send([], [], function (Message $message) use ($recipientEmail, $replyToEmail, $subject, $senderName, $customerName, $html) {
+            $message->to($recipientEmail, $customerName)->subject($subject)->html($html);
 
             if ($replyToEmail !== '') {
                 $message->replyTo($replyToEmail, $senderName);
